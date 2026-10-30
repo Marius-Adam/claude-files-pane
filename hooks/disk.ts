@@ -11,7 +11,8 @@ const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: '
 const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-3' })
 
 // What the pane reads of the disk: git's view of the project shown, folder listings and the file
-// index search walks. All of it read-only: listings, and git commands that change nothing.
+// index search walks. All of it read-only: listings, and git commands that change nothing, run
+// only where the session's own repository is (isTrusted).
 
 export const SKIP = new Set(['.git'])
 
@@ -20,8 +21,46 @@ export function redraw($: EngineInterface) {
   return $.ui.invalidate('ui.render')
 }
 
+// Git never takes the index lock for the pane (as VS Code runs it), so a read here cannot make
+// Claude's own `git commit` fail on `index.lock`.
 export function run($: EngineInterface, argv: string[], timeoutMs = 10000, cwd?: string) {
-  return $.process.run(argv, { timeoutMs, ...(cwd ? { cwd } : {}) }).catch(() => null)
+  const [bin, ...args] = argv
+  const line = bin === 'git' ? [bin, '--no-optional-locks', ...args] : argv
+
+  return $.process.run(line, { timeoutMs, ...(cwd ? { cwd } : {}) }).catch(() => null)
+}
+
+// A repository's own config can make git run programs of its choosing (core.fsmonitor, a clean
+// filter, a textconv) on `status`, `diff` and `ls-files`, and no flag turns them all off. So
+// those run only in the session's own repository, which the person trusted by working in it and
+// where Claude Code runs git already: a folder whose git directory is the session folder's. A
+// project the tree follows Claude into, or a repository nested inside the session's, gets no git.
+// (`rev-parse` reads the config but runs nothing from it.)
+const gitDirs = new Map<string, Promise<string | null>>()
+
+function gitDirOf($: EngineInterface, dir: string) {
+  let found = gitDirs.get(dir)
+
+  if (!found) {
+    found = run($, ['git', 'rev-parse', '--absolute-git-dir'], 3000, dir).then(out =>
+      out && out.exitCode === 0 ? out.stdout.trim() || null : null,
+    )
+    gitDirs.set(dir, found)
+  }
+
+  return found
+}
+
+// Whether git may run in `dir` (absolute; the session's folder when empty).
+export async function isTrusted($: EngineInterface, dir = ''): Promise<boolean> {
+  const cwd = await $.session.cwd().catch(() => '')
+
+  if (!cwd) return false
+  if (!dir || dir === cwd) return true
+
+  const [own, at] = await Promise.all([gitDirOf($, cwd), gitDirOf($, dir)])
+
+  return own !== null && at === own
 }
 
 // Git's NUL-separated output (`-z`), whose paths come raw, never quoted or escaped. A newline
@@ -59,6 +98,8 @@ export function listDir($: EngineInterface, path: string) {
 // Git as the project shown sees it: `root`, or the session's folder when empty. Paths come
 // relative to that folder, as the tree spells them.
 async function readGit($: EngineInterface, root: string): Promise<Git | null> {
+  if (root && !(await isTrusted($, root))) return null
+
   const at = root || undefined
   // The branch, and where the folder sits in its repository (`sub/`, or nothing at the top).
   const head = await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD', '--show-prefix'], 5000, at)
@@ -151,7 +192,7 @@ export async function indexFiles($: EngineInterface, home: string): Promise<stri
   if (fileIndex && fileIndexRoot === home) return fileIndex
 
   fileIndexRoot = home
-  const listed = await run($, ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], 10000, home)
+  const listed = (await isTrusted($, home)) ? await run($, ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], 10000, home) : null
 
   if (listed && listed.exitCode === 0) {
     fileIndex = fieldsOf(listed.stdout).filter(Boolean)
@@ -203,8 +244,12 @@ const recount = (hunk: string[]) => {
 
 // What changed in a file since HEAD, as unified-diff hunks for the pane's Code view; a file git
 // does not track yet, whole, as added lines. Past DIFF_LINES the rest is left out, and counted.
+// None outside the session's repository: see isTrusted.
 export async function diffOf($: EngineInterface, abs: string): Promise<{ text: string; more: number }> {
   const dir = dirOf(abs)
+
+  if (!(await isTrusted($, dir))) return { text: '', more: 0 }
+
   const tracked = await run($, ['git', 'ls-files', '--error-unmatch', '--', abs], 5000, dir)
   const argv =
     tracked && tracked.exitCode === 0

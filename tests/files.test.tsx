@@ -61,11 +61,13 @@ const engine = (
     ran.push({ argv, cwd: init?.cwd })
     const stdout = argv.includes('--abbrev-ref')
       ? 'main\n'
+      : argv.includes('--absolute-git-dir')
+        ? '/proj/.git\n'
       : argv.includes('--short') && argv.includes('rev-parse')
         ? `${git.head ?? '9f3b210'}\n`
         : argv.includes('status')
           ? git.dirty.map(line => `${line}\0`).join('')
-          : argv[1] === 'diff' && !argv.includes('--numstat')
+          : argv.includes('diff') && !argv.includes('--numstat')
             ? (git.diff ?? 'diff --git a/src/client.js b/src/client.js\n--- a/src/client.js\n+++ b/src/client.js\n@@ -1 +1 @@\n-a\n+b\n')
           : argv.includes('--numstat')
             ? git.dirty.length > 0 ? '1\t1\tsrc/client.js\n' : ''
@@ -589,5 +591,47 @@ test('the touched list keeps the earlier turns, a press away', async ($, on) => 
   await ui.press({ key: 'scope' })
   expect(await text(ui, /^Nothing yet$/)).toBeUndefined()
   expect(await text(ui, /Opened/)).toMatch(/Opened/)
+  await ui.unmount()
+})
+
+// A repository's config can make git run programs of its own on status, diff and ls-files, so
+// the pane runs those in the session's repository alone: never in one it follows Claude into, nor
+// one nested inside the session's.
+test('git reads nothing of a repository other than the session’s', async ($, on) => {
+  const ran: { argv: string[]; cwd?: string }[] = []
+  const tree: Record<string, ReturnType<typeof entry>[]> = {
+    '/proj': [entry('vendor', 'dir')],
+    '/proj/vendor': [entry('lib.js', 'file')],
+    '/work/other': [entry('util.ts', 'file')],
+  }
+  on('command.register', () => ({ value: { command: 'files' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.cwd', () => ({ value: '/proj' }))
+  on('tool.call', () => ({ result: {} }))
+  on('fs.list', (_, e) => ({ value: tree[(e as { path: string }).path] ?? [] }))
+  on('process.run', (_, e) => {
+    const { argv, init } = e as { argv: string[]; init?: { cwd?: string } }
+    const cwd = init?.cwd ?? '/proj'
+    ran.push({ argv, cwd })
+    // /proj/vendor is a repository of its own, inside the session's.
+    const repo = cwd.startsWith('/work/other') ? '/work/other' : cwd.startsWith('/proj/vendor') ? '/proj/vendor' : '/proj'
+    const stdout = argv.includes('--absolute-git-dir') ? `${repo}/.git\n` : argv.includes('--show-toplevel') ? `${repo}\n` : argv.includes('--abbrev-ref') ? 'main\n' : ''
+
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/work/other/util.ts', old_string: 'a', new_string: 'b' })
+  await settled()
+
+  const risky = (one: { argv: string[] }) => ['status', 'diff', 'ls-files'].some(cmd => one.argv.includes(cmd))
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  // The tree shows the other project, with no git line: its git was never asked.
+  expect(await text(ui, /^util\.ts$/)).toBe('util.ts')
+  expect(await text(ui, /^main$/)).toBeUndefined()
+  expect(ran.filter(one => one.cwd?.startsWith('/work/other') && risky(one))).toEqual([])
+  // Every git the pane runs leaves the index lock alone.
+  expect(ran.every(one => one.argv[0] !== 'git' || one.argv[1] === '--no-optional-locks')).toBe(true)
   await ui.unmount()
 })
