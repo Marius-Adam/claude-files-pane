@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Git, Now, Status, Touch, View } from '../types'
+import type { Git, Now, Opening, Status, Touch, View } from '../types'
 import { fileIcon, folderIcon } from './icons'
 
 const PANE = 'files-pane'
@@ -13,7 +13,7 @@ const MATCHES = 50
 const SKIP = new Set(['.git'])
 
 // Hidden files show by default, as in VS Code's explorer: the toolbar offers to hide them.
-const DEFAULT_VIEW: View = { query: '', dir: '', expanded: [], showSizes: false, showHidden: true }
+const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], showSizes: false, showHidden: true }
 
 // Raw colors, so the pane looks the same whatever the theme. A tint is the color at low alpha.
 const READ = '#ad8cf2'
@@ -23,6 +23,7 @@ const DONE = '#72cc82'
 const ADDED = '#72cc82'
 const REMOVED = '#e86f6f'
 const FOLDER = '#7fa7e3'
+const TOOL = '#6cb0f0'
 const MUTED = '#8a8a8a'
 const tint = (color: string, alpha = '26') => `${color}${alpha}`
 const HOVER = '#8080801a'
@@ -32,11 +33,12 @@ const CARD = 'userMessageBackground'
 const CARD_EDGE = '#8080802e'
 
 // Change a tag when its value's fields change: it declines what an earlier version stored.
-const now = atom({ plugin: 'files-pane', key: 'now' } as const, null, { shape: 'now-2' })
+const now = atom({ plugin: 'files-pane', key: 'now' } as const, null, { shape: 'now-3' })
 const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-2' })
-const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-2' })
+const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-3' })
 const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-3' })
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
+const opening = atom({ plugin: 'files-pane', key: 'opening' } as const, null, { shape: 'opening-1' })
 // Bumped by Refresh so the tree is listed again.
 const tick = atom({ plugin: 'files-pane', key: 'tick' } as const, 0)
 
@@ -131,6 +133,10 @@ const GLYPHS = {
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   spark: '<path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/>',
   idle: '<circle cx="12" cy="12" r="6"/>',
+  terminal: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 10l3 2.5L7 15M12.5 15H17"/>',
+  search: '<circle cx="11" cy="11" r="6"/><path d="M15.5 15.5L20 20"/>',
+  globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.6 2.6 14.4 0 17M12 3.5c-2.6 2.6-2.6 14.4 0 17"/>',
+  quill: '<path d="M5 19c3-1 6-4 8-7l5-7c-4 1-8 4-10 8-1 2-2 4-3 6z"/><path d="M5 19l5-5"/>',
 } as const
 
 // How the badge moves: a halo while Claude has a file, a spinning arc while it thinks, a check
@@ -174,7 +180,28 @@ const dotSvg = (color: string, isLive: boolean) =>
       : ''
   }<circle cx="6" cy="6" r="3" fill="${color}"/></svg>`
 
-const TEXT_GLYPH: Record<keyof typeof GLYPHS, string> = { eye: '◉', pencil: '✎', check: '✓', spark: '✳', idle: '○' }
+const TEXT_GLYPH: Record<keyof typeof GLYPHS, string> = {
+  eye: '◉',
+  pencil: '✎',
+  check: '✓',
+  spark: '✳',
+  idle: '○',
+  terminal: '❯',
+  search: '⌕',
+  globe: '◍',
+  quill: '✐',
+}
+
+const WRITE = '#5fb3b3'
+
+// The glyph a tool's card wears.
+const glyphOf = (tool: string): keyof typeof GLYPHS =>
+  tool === 'Bash' ? 'terminal' : tool === 'Grep' || tool === 'Glob' || tool === 'WebSearch' ? 'search' : tool === 'WebFetch' ? 'globe' : 'spark'
+
+// A folder's chevron, turned `angle` degrees: 0 closed, 90 open, in between while it opens.
+const chevronSvg = (angle: number) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path d="M4.5 2.75L7.75 6L4.5 9.25" fill="none" stroke="${MUTED}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="rotate(${angle} 6 6)"/></svg>`
+const BLANK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"/>'
 
 // The folder above `dir`, which may climb past the project as `..` segments.
 const parentOf = (dir: string) => {
@@ -193,6 +220,51 @@ const touchOf = (e: { tool: string }) => {
   if (READS.has(e.tool)) return { path, isEdit: false }
 
   return null
+}
+
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text)
+const firstLine = (text: string) => text.split('\n').find(line => line.trim() !== '')?.trim() ?? ''
+
+// What a tool call other than a read or an edit is doing, in words: a title and the detail under it.
+const describe = (e: { tool: string }, cwd: string): { title: string; detail: string } => {
+  const input = e as unknown as Record<string, unknown>
+  const text = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '')
+  const where = (path: string) => (path ? rel(cwd, path) : '')
+
+  switch (e.tool) {
+    case 'Bash':
+      return { title: text('description') ? clip(text('description'), 60) : 'Running a command', detail: clip(firstLine(text('command')), 80) }
+    case 'Grep':
+      return { title: `Searching for “${clip(text('pattern'), 40)}”`, detail: where(text('path')) || text('glob') || 'in the project' }
+    case 'Glob':
+      return { title: 'Finding files', detail: text('pattern') }
+    case 'WebFetch':
+      return { title: `Reading ${text('url').replace(/^https?:\/\/(www\.)?/, '').split('/')[0] || 'a web page'}`, detail: clip(text('url'), 80) }
+    case 'WebSearch':
+      return { title: 'Searching the web', detail: clip(text('query'), 80) }
+    case 'Task':
+    case 'Agent':
+      return { title: 'Handing work to a subagent', detail: clip(text('description') || firstLine(text('prompt')), 80) }
+    case 'TodoWrite':
+      return { title: 'Updating the plan', detail: '' }
+    default: {
+      // An MCP tool is `mcp__<server>__<tool>`: say both, readably.
+      const [, server, name] = e.tool.match(/^mcp__(.+?)__(.+)$/) ?? []
+
+      return server ? { title: `Using ${name!.replace(/[_-]+/g, ' ')}`, detail: server.replace(/[_-]+/g, ' ') } : { title: `Using ${e.tool}`, detail: '' }
+    }
+  }
+}
+
+// The end of a streaming thought or answer, cut at a word: what the card shows of it.
+const tailOf = (text: string, max = 140) => {
+  const flat = text.replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim()
+
+  if (flat.length <= max) return flat
+
+  const cut = flat.slice(-max)
+
+  return `…${cut.slice(cut.indexOf(' ') + 1)}`
 }
 
 const isCommit = (e: { tool: string }) => {
@@ -221,20 +293,54 @@ const reveal = (old: View, path: string): View => {
   return missing.length === 0 ? old : { ...old, expanded: [...old.expanded, ...missing] }
 }
 
-const run = ($: EngineInterface, argv: string[], timeoutMs = 10000) => $.process.run(argv, { timeoutMs }).catch(() => null)
+// A folder opening shows one more of its rows each frame, so the list slides open; after the
+// last frame the cascade is cleared and the folder draws whole.
+const FRAME_MS = 28
+const FRAMES = 12
+let cascade: { cancel: () => void } | null = null
 
-const readGit = async ($: EngineInterface): Promise<Git | null> => {
-  const head = await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'], 5000)
+const startOpening = async ($: EngineInterface, path: string) => {
+  cascade?.cancel()
+  await update($, opening, () => ({ path, at: Date.now(), count: 1 }))
+  redraw($)
+
+  // Without a clock (a host that refuses timers), the folder simply opens whole.
+  try {
+    const timer = $.clock.every(FRAME_MS, () => {
+      void update($, opening, old => (old && old.path === path && old.count < FRAMES ? { ...old, count: old.count + 1 } : null)).then(next => {
+        if (!next) timer.cancel()
+        redraw($)
+      })
+    })
+
+    cascade = timer
+  } catch {
+    await update($, opening, () => null)
+    redraw($)
+  }
+}
+
+// The folder to list, absolute: `dir` under `home`, the project shown. (Listed with no path,
+// a host may answer for its own folder rather than the session's.)
+const listPath = (home: string, dir: string) => (dir ? join(home, dir) : home)
+
+const run = ($: EngineInterface, argv: string[], timeoutMs = 10000, cwd?: string) =>
+  $.process.run(argv, { timeoutMs, ...(cwd ? { cwd } : {}) }).catch(() => null)
+
+// Git as the project shown sees it: `root`, or the session's folder when empty.
+const readGit = async ($: EngineInterface, root: string): Promise<Git | null> => {
+  const at = root || undefined
+  const head = await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'], 5000, at)
 
   if (!head || head.exitCode !== 0) return null
 
   // --short keeps paths relative to the working directory, as the tree spells them.
   const [state, numstat, ahead, ignored] = await Promise.all([
-    run($, ['git', 'status', '--short', '-uall']),
-    run($, ['git', 'diff', '--numstat', '--relative', 'HEAD']),
-    run($, ['git', 'rev-list', '--count', '@{u}..HEAD'], 5000),
+    run($, ['git', 'status', '--short', '-uall'], 10000, at),
+    run($, ['git', 'diff', '--numstat', '--relative', 'HEAD'], 10000, at),
+    run($, ['git', 'rev-list', '--count', '@{u}..HEAD'], 5000, at),
     // `--directory` names an ignored folder once, as `node_modules/`, not every file in it.
-    run($, ['git', 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory']),
+    run($, ['git', 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory'], 10000, at),
   ])
   const changed = (state?.stdout ?? '')
     .split('\n')
@@ -258,13 +364,16 @@ const readGit = async ($: EngineInterface): Promise<Git | null> => {
   }
 }
 
-// Every file under the working directory, for search: git's list, else a bounded walk.
+// Every file in the project shown, for search: git's list, else a bounded walk.
 let fileIndex: string[] | null = null
+let fileIndexRoot = ''
 
-const indexFiles = async ($: EngineInterface): Promise<string[]> => {
-  if (fileIndex) return fileIndex
+// `home` is the project shown, absolute.
+const indexFiles = async ($: EngineInterface, home: string): Promise<string[]> => {
+  if (fileIndex && fileIndexRoot === home) return fileIndex
 
-  const listed = await run($, ['git', 'ls-files', '--cached', '--others', '--exclude-standard'])
+  fileIndexRoot = home
+  const listed = await run($, ['git', 'ls-files', '--cached', '--others', '--exclude-standard'], 10000, home)
 
   if (listed && listed.exitCode === 0) {
     fileIndex = listed.stdout.split('\n').filter(Boolean)
@@ -277,7 +386,7 @@ const indexFiles = async ($: EngineInterface): Promise<string[]> => {
 
   while (queue.length > 0 && found.length < 5000) {
     const dir = queue.shift()!
-    const entries = await $.fs.list(dir || undefined).catch(() => [])
+    const entries = await $.fs.list(listPath(home, dir)).catch(() => [])
 
     for (const entry of entries) {
       if (SKIP.has(entry.name) || entry.name === 'node_modules') continue
@@ -295,7 +404,7 @@ const indexFiles = async ($: EngineInterface): Promise<string[]> => {
 const redraw = ($: EngineInterface) => $.ui.invalidate('ui.render')
 
 const refreshGit = async ($: EngineInterface) => {
-  const next = await readGit($)
+  const next = await readGit($, (await read($, view)).root)
   await update($, git, () => next)
   redraw($)
 }
@@ -304,6 +413,37 @@ const openPane = async ($: EngineInterface) => {
   const cwd = await $.session.cwd().catch(() => '')
 
   return $.ui.open({ id: PANE, title: `Files: ${base(cwd) || 'project'}` })
+}
+
+// The tree follows Claude: a file in another project moves it to that project (its git root, else
+// the file's folder), a file back home moves it home, and either way it opens down to the file.
+const follow = async ($: EngineInterface, cwd: string, abs: string) => {
+  const old = await read($, view)
+  const shown = old.root || cwd
+  let root = old.root
+
+  if (!abs.startsWith(`${shown}/`)) {
+    if (abs.startsWith(`${cwd}/`)) root = ''
+    else {
+      const top = await run($, ['git', 'rev-parse', '--show-toplevel'], 3000, dirOf(abs))
+      root = top && top.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : dirOf(abs)
+      if (root === cwd) root = ''
+    }
+  }
+
+  const isMoved = root !== old.root
+  const start = isMoved ? { ...old, root, dir: '', expanded: [] } : old
+  const next = reveal(start, abs.slice((root || cwd).length + 1))
+  await update($, view, () => next)
+
+  if (isMoved) {
+    fileIndex = null
+    void refreshGit($)
+  }
+
+  // The deepest folder it opened slides open; the ones above it open at once.
+  const opened = next.expanded.filter(dir => !start.expanded.includes(dir))
+  if (opened.length > 0) await startOpening($, opened[opened.length - 1]!)
 }
 
 // The card between tools: what this turn has done so far.
@@ -352,14 +492,29 @@ export const register: Register = on => {
     }
 
     const hit = touchOf(e)
-
-    if (!hit) return next(e)
-
     // The pane's bookkeeping never stands between Claude and its tool: a failure here is dropped.
-    const path = rel(await $.session.cwd().catch(() => ''), hit.path)
+    const cwd = await $.session.cwd().catch(() => '')
+
+    if (!hit) {
+      const doing: Now = { verb: 'working', tool: e.tool, ...describe(e, cwd) }
+      await update($, now, () => doing).catch(() => {})
+      redraw($)
+
+      try {
+        return await next(e)
+      } finally {
+        // Back to what the turn has done, unless something newer took the card meanwhile.
+        const list = await read($, touched).catch(() => [])
+        await update($, now, old => (old === null || (old.verb === 'working' && old.tool === e.tool) ? between(list) : old)).catch(() => {})
+        redraw($)
+      }
+    }
+
+    const abs = hit.path.startsWith('/') ? hit.path : join(cwd, hit.path)
+    const path = rel(cwd, abs)
     await update($, now, () => ({ verb: hit.isEdit ? 'editing' : 'reading', path }) as const).catch(() => {})
     await update($, touched, list => upsert(list, path, hit.isEdit)).catch(() => {})
-    await update($, view, old => reveal(old, path)).catch(() => {})
+    await follow($, cwd, abs).catch(() => {})
     redraw($)
 
     try {
@@ -374,6 +529,45 @@ export const register: Register = on => {
         fileIndex = null
         void refreshGit($)
       }
+    }
+  })
+
+  // What Claude thinks and writes, as it streams: the card shows its latest words. Updates are
+  // spaced out so a fast stream redraws a few times a second, not on every piece.
+  on('turn.step', async function* ($, e, next) {
+    const stream = next(e)
+
+    if (e.agentId) return yield* stream
+
+    let thought = ''
+    let answer = ''
+    let shownAt = 0
+    const show = (value: Now) => {
+      const at = Date.now()
+
+      if (at - shownAt < 300) return
+      shownAt = at
+      void update($, now, () => value)
+        .then(() => redraw($))
+        .catch(() => {})
+    }
+
+    for (;;) {
+      const step = await stream.next()
+
+      if (step.done) return step.value
+
+      const chunk = step.value
+
+      if (chunk.kind === 'thinking') {
+        thought += chunk.text
+        show({ verb: 'thinking', thought: tailOf(thought) })
+      } else if (chunk.kind === 'text') {
+        answer += chunk.text
+        show({ verb: 'writing', text: tailOf(answer) })
+      }
+
+      yield chunk
     }
   })
 
@@ -418,19 +612,33 @@ export const register: Register = on => {
     const Svg = e.surface !== 'terminal' && 'Svg' in elements ? elements.Svg : null
     const [cur, list, v, g, foot] = await Promise.all([read($, now), read($, touched), read($, view), read($, git), read($, status)])
     await read($, tick)
+    const op = await read($, opening)
     const cwd = await $.session.cwd()
-    const project = base(cwd)
+    // The project the tree shows: the session's folder, or the one it followed Claude to.
+    const home = v.root || cwd
+    const project = base(home)
     const changed = new Set(g?.changed ?? [])
-    const byPath = new Map(list.map(one => [one.path, one]))
+    // A touched file as the tree spells it, relative to the project shown; null outside it.
+    const keyOf = (path: string) => {
+      const abs = path.startsWith('/') ? path : join(cwd, path)
+
+      return abs.startsWith(`${home}/`) ? abs.slice(home.length + 1) : null
+    }
+    const byPath = new Map(list.flatMap(one => (keyOf(one.path) === null ? [] : [[keyOf(one.path)!, one] as const])))
     const setView = async (patch: Partial<View>) => {
       await update($, view, old => ({ ...old, ...patch }))
       redraw($)
+      if (patch.root !== undefined && patch.root !== v.root) {
+        fileIndex = null
+        void refreshGit($)
+      }
     }
 
-    const toggle = (path: string) => {
+    const toggle = async (path: string) => {
       const isOpen = v.expanded.includes(path)
 
-      return setView({ expanded: isOpen ? v.expanded.filter(one => one !== path) : [...v.expanded, path] })
+      await setView({ expanded: isOpen ? v.expanded.filter(one => one !== path) : [...v.expanded, path] })
+      if (!isOpen) await startOpening($, path)
     }
 
     // Every Svg names itself in `alt`: the desktop drops one whose alt is empty.
@@ -529,7 +737,47 @@ export const register: Register = on => {
           glyph: 'spark' as const,
           motion: 'spin' as const,
           title: 'Claude is thinking',
-          sub: opened > 0 ? <Text dimColor>opened {plural(opened, 'file')}</Text> : <Text dimColor>in {project}</Text>,
+          sub: cur.thought ? (
+            <Text dimColor italic size="footnote">
+              {cur.thought}
+            </Text>
+          ) : opened > 0 ? (
+            <Text dimColor>opened {plural(opened, 'file')}</Text>
+          ) : (
+            <Text dimColor>in {project}</Text>
+          ),
+        }
+      }
+
+      if (cur.verb === 'writing') {
+        return {
+          kicker: 'RIGHT NOW',
+          color: WRITE,
+          glyph: 'quill' as const,
+          motion: 'pulse' as const,
+          title: 'Claude is writing',
+          sub: (
+            <Text dimColor size="footnote">
+              {cur.text}
+            </Text>
+          ),
+        }
+      }
+
+      if (cur.verb === 'working') {
+        return {
+          kicker: 'RIGHT NOW',
+          color: TOOL,
+          glyph: glyphOf(cur.tool),
+          motion: 'pulse' as const,
+          title: cur.title,
+          sub: cur.detail ? (
+            <Text dimColor mono size="footnote" wrap="truncate-end">
+              {cur.detail}
+            </Text>
+          ) : (
+            <Text dimColor>{cur.tool}</Text>
+          ),
         }
       }
 
@@ -613,16 +861,18 @@ export const register: Register = on => {
     // A folder's changed files under it, for its count and its icon's color.
     const changedUnder = (dir: string) => (g?.changed ?? []).filter(one => one.startsWith(`${dir}/`)).length
     // The touched file under a folder that Claude has in hand, for the folder's name color.
-    const activeUnder = (dir: string) => list.find(one => one.isActive && one.path.startsWith(`${dir}/`))
+    const activeUnder = (dir: string) => list.find(one => one.isActive && (keyOf(one.path) ?? '').startsWith(`${dir}/`))
 
     // The tree under v.dir, open folders listed in place, up to TREE_ROWS rows.
     const rows: JSX.Element[] = []
     const walk = async (dir: string, depth: number): Promise<void> => {
-      const entries = await $.fs.list(dir || undefined).catch(() => [])
-      const shown = entries
+      const entries = await $.fs.list(listPath(home, dir)).catch(() => [])
+      const sorted = entries
         .filter(entry => !SKIP.has(entry.name) || v.showHidden)
         .filter(entry => v.showHidden || !entry.name.startsWith('.'))
         .sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name))
+      // A folder sliding open shows its first rows only; the cascade adds one each frame.
+      const shown = op && op.path === dir ? sorted.slice(0, op.count) : sorted
 
       for (const entry of shown) {
         if (rows.length >= TREE_ROWS) return
@@ -648,11 +898,20 @@ export const register: Register = on => {
               hover={{ backgroundColor: HOVER }}
             >
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
-                <Button key={`caret:${path}`} plain onPress={() => toggle(path)}>
-                  <Text dimColor mono size="caption">
-                    {isOpen ? '▾' : '▸'}
-                  </Text>
-                </Button>
+                {Svg ? (
+                  <Svg
+                    source={chevronSvg(isOpen ? (op?.path === path ? Math.min(90, ((Date.now() - op.at) / 150) * 90) : 90) : 0)}
+                    alt={isOpen ? 'open' : 'closed'}
+                    width={12}
+                    height={12}
+                  />
+                ) : (
+                  <Button key={`caret:${path}`} plain onPress={() => toggle(path)}>
+                    <Text dimColor mono size="caption">
+                      {isOpen ? '▾' : '▸'}
+                    </Text>
+                  </Button>
+                )}
                 {icon(folderIcon(entry.name, isOpen), entry.name, '▪', folderColor, 16)}
                 <Button key={`dir:${path}`} plain onPress={() => toggle(path)}>
                   <Text color={active ? accentOf(active) : count > 0 ? DIRTY : undefined} dimColor={!active && count === 0 && isIgnored(path, true)}>
@@ -704,10 +963,14 @@ export const register: Register = on => {
             >
               {touch?.isActive && shimmer(accentOf(touch))}
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
-                {/* The caret's width, unseen, so a file's icon lines up with its folder's. */}
-                <Text mono size="caption" color="#00000000">
-                  ▸
-                </Text>
+                {/* The chevron's width, unseen, so a file's icon lines up with its folder's. */}
+                {Svg ? (
+                  <Svg source={BLANK_SVG} alt="indent" width={12} height={12} />
+                ) : (
+                  <Text mono size="caption" color={CLEAR}>
+                    ▸
+                  </Text>
+                )}
                 {chip(entry.name)}
                 <Text
                   color={accent}
@@ -726,7 +989,7 @@ export const register: Register = on => {
     }
 
     const query = v.query.trim().toLowerCase()
-    const matches = query ? (await indexFiles($)).filter(path => path.toLowerCase().includes(query)).slice(0, MATCHES) : []
+    const matches = query ? (await indexFiles($, home)).filter(path => path.toLowerCase().includes(query)).slice(0, MATCHES) : []
 
     if (!query) await walk(v.dir, 0)
 
@@ -855,7 +1118,7 @@ export const register: Register = on => {
           {tool('sizes', v.showSizes ? 'Dates' : 'Sizes', () => setView({ showSizes: !v.showSizes }))}
           {tool('hidden', v.showHidden ? 'Hide dotfiles' : 'Show dotfiles', () => setView({ showHidden: !v.showHidden }))}
           {tool('up', 'Up a folder', () => setView({ dir: parentOf(v.dir), expanded: [] }))}
-          {v.dir !== '' && tool('home', 'Back to project', () => setView({ dir: '', expanded: [] }))}
+          {(v.dir !== '' || v.root !== '') && tool('home', 'Back to project', () => setView({ root: '', dir: '', expanded: [] }))}
         </Box>
 
         <Box flexDirection="column" borderStyle="round" borderColor={CARD_EDGE} backgroundColor={isRich ? CARD : undefined} gap="xs">

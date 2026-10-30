@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { SVGS } from '../hooks/icon-svgs'
@@ -187,5 +187,102 @@ test('a file Claude reads opens its folders in the tree, as VS Code reveals it',
   // No press on src: the read opened it.
   const names = (await ui.findAll({ type: 'Text', text: /^client\.js$/ })) as unknown as unknown[]
   expect(names.length).toBeGreaterThan(1)
+  await ui.unmount()
+})
+
+// A second world for the tests below: a tree by absolute folder, git's top level for folders outside /proj,
+// and a tool call that can be held open while the test looks.
+const world = (on: Parameters<TestBody>[1], tree: Record<string, ReturnType<typeof entry>[]>, hold?: Promise<void>) => {
+  on('command.register', () => ({ value: { command: 'files' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.cwd', () => ({ value: '/proj' }))
+  on('tool.call', async () => {
+    await hold
+
+    return { result: {} }
+  })
+  on('fs.list', (_, e) => ({ value: tree[(e as { path: string }).path] ?? [] }))
+  on('process.run', (_, e) => {
+    const { argv, init } = e as { argv: string[]; init?: { cwd?: string } }
+    const cwd = init?.cwd
+    const stdout = argv.includes('--show-toplevel') ? (cwd?.startsWith('/work/other') ? '/work/other\n' : '/proj\n') : argv.includes('--abbrev-ref') ? 'main\n' : ''
+
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+}
+
+test('a folder slides open: one more row each frame, its chevron turning', async ($, on) => {
+  const clock = mock.clock(on)
+  world(on, { '/proj': [entry('src', 'dir')], '/proj/src': [entry('a.ts', 'file'), entry('b.ts', 'file'), entry('c.ts', 'file')] })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'dir:src' })
+
+  expect(await text(ui, /^a\.ts$/)).toBe('a.ts')
+  expect(await text(ui, /^c\.ts$/)).toBeUndefined()
+
+  await clock.advance(200)
+  expect(await text(ui, /^c\.ts$/)).toBe('c.ts')
+  await ui.unmount()
+})
+
+test('the tree follows Claude into another project and back', async ($, on) => {
+  world(on, {
+    '/proj': [entry('home.ts', 'file')],
+    '/work/other': [entry('lib', 'dir')],
+    '/work/other/lib': [entry('util.ts', 'file')],
+  })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/work/other/lib/util.ts', old_string: 'a', new_string: 'b' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  // The tree lists the other project, opened down to the file, and offers the way home.
+  expect(await text(ui, /^ ?other ?$/)).toMatch(/other/)
+  expect((await ui.findAll({ type: 'Text', text: /^util\.ts$/ })).length).toBeGreaterThan(1)
+  expect(await text(ui, /^home\.ts$/)).toBeUndefined()
+
+  await ui.press({ key: 'home' })
+  expect(await text(ui, /^home\.ts$/)).toBe('home.ts')
+  await ui.unmount()
+})
+
+test('the card says what Claude is doing with a tool other than a read or an edit', async ($, on) => {
+  let release = () => {}
+  const hold = new Promise<void>(resolve => (release = resolve))
+  world(on, {}, hold)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const call = $.tool.call({ tool: 'Bash', command: 'npm test -- --watch=false', description: 'Run the tests' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  expect(await text(ui, /^Run the tests$/)).toBe('Run the tests')
+  expect(await text(ui, /^npm test/)).toMatch(/^npm test/)
+
+  release()
+  await call
+  await ui.unmount()
+})
+
+test('the card shows the tail of what Claude is thinking as it streams', async ($, on) => {
+  world(on, {})
+  on('turn.step', async function* () {
+    yield { kind: 'thinking', index: 0, text: 'The retry should back off, ' } as never
+    yield { kind: 'thinking', index: 0, text: 'so I will check client.ts first.' } as never
+
+    return { turnId: 't1', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: null } as never
+  })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  for await (const _ of $.turn.step({ turnId: 't1', index: 0, model: 'test', messageCount: 1 } as never) as never as AsyncIterable<unknown>) {
+    // Drain the stream as the engine would.
+  }
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  expect(await text(ui, /^Claude is thinking$/)).toBe('Claude is thinking')
+  expect(await text(ui, /back off/)).toMatch(/back off/)
   await ui.unmount()
 })

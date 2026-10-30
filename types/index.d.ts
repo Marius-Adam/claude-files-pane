@@ -1,16 +1,24 @@
-// What Claude is doing with files: one file in hand, thinking between tools, a turn's summary or a commit.
+// What Claude is doing right now: a file in hand, another tool at work, thinking (with the tail of
+// its thought as it streams), writing its answer, a turn's summary or a commit.
 export type Now =
   | { verb: 'reading' | 'editing'; path: string }
-  | { verb: 'thinking' }
+  | { verb: 'working'; tool: string; title: string; detail: string }
+  | { verb: 'thinking'; thought?: string }
+  | { verb: 'writing'; text: string }
   | { verb: 'done'; edited: string[]; read: string[] }
   | { verb: 'committed'; hash: string; files: string[] }
+
+// A folder opening in the tree: its rows appear one by one from `at`, its chevron turns.
+export type Opening = { path: string; at: number; count: number }
 
 // A file Claude touched this turn, its path relative to the working directory.
 export type Touch = { path: string; isEdited: boolean; isActive: boolean; isCommitted: boolean }
 
-// The pane's own controls: search text, the folder shown, open folders and toggles.
+// The pane's own controls: search text, the project shown (`root`, absolute; empty for the
+// session's folder), the folder shown under it, open folders and toggles.
 export type View = {
   query: string
+  root: string
   dir: string
   expanded: string[]
   showSizes: boolean
@@ -39,6 +47,7 @@ declare module 'claude-code' {
       view: Shaped<View>
       git: Shaped<Git | null>
       status: Shaped<Status | null>
+      opening: Shaped<Opening | null>
       tick: number
     }
   }
