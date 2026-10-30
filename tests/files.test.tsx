@@ -22,9 +22,18 @@ const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 
 const entry = (name: string, kind: 'file' | 'dir', size = 0) => ({ name, kind, size, mtimeMs: 0, isLink: false })
 
+// What git answers in the engine below. `dirty` is what it reports as changed, so a test can commit
+// by emptying it; a commit moves HEAD to a1c9e42 unless `isRefused`, as a failing hook would.
+type GitWorld = { dirty: string[]; ahead: string; head?: string; shown?: string; isRefused?: boolean }
+
 // Each hook stands for the engine: a project at /proj with src/ and tests/, on branch main.
-// `dirty` is what git reports as changed, so a test can commit by emptying it.
-const engine = (on: Parameters<TestBody>[1], git = { dirty: [' M src/client.js'], ahead: '0' }, registered: string[] = []) => {
+// `ran` collects every command git is asked, with the folder it runs in.
+const engine = (
+  on: Parameters<TestBody>[1],
+  git: GitWorld = { dirty: [' M src/client.js'], ahead: '0' },
+  registered: string[] = [],
+  ran: { argv: string[]; cwd?: string }[] = [],
+) => {
   on('command.register', (_, e) => {
     registered.push((e as { name: string }).name)
 
@@ -33,7 +42,11 @@ const engine = (on: Parameters<TestBody>[1], git = { dirty: [' M src/client.js']
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/proj' }))
-  on('tool.call', () => ({ result: {} }))
+  on('tool.call', (_, e) => {
+    if (/\bcommit\b/.test((e as { command?: string }).command ?? '') && !git.isRefused) git.head = 'a1c9e42'
+
+    return { result: {} }
+  })
   on('fs.list', (_, e) => {
     const path = (e as { path?: string }).path ?? ''
 
@@ -42,11 +55,12 @@ const engine = (on: Parameters<TestBody>[1], git = { dirty: [' M src/client.js']
     return { value: [entry('README.md', 'file', 10), entry('src', 'dir'), entry('tests', 'dir'), entry('.env', 'file')] }
   })
   on('process.run', (_, e) => {
-    const argv = (e as { argv: string[] }).argv
+    const { argv, init } = e as { argv: string[]; init?: { cwd?: string } }
+    ran.push({ argv, cwd: init?.cwd })
     const stdout = argv.includes('--abbrev-ref')
       ? 'main\n'
       : argv.includes('--short') && argv.includes('rev-parse')
-        ? 'a1c9e42\n'
+        ? `${git.head ?? '9f3b210'}\n`
         : argv.includes('status')
           ? git.dirty.map(line => `${line}\n`).join('')
           : argv.includes('--numstat')
@@ -54,7 +68,7 @@ const engine = (on: Parameters<TestBody>[1], git = { dirty: [' M src/client.js']
             : argv.includes('rev-list')
               ? `${git.ahead}\n`
               : argv.includes('show')
-                ? 'src/client.js\n'
+                ? `${git.shown ?? 'src/client.js'}\n`
                 : ''
 
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -63,6 +77,10 @@ const engine = (on: Parameters<TestBody>[1], git = { dirty: [' M src/client.js']
 
 const text = async (ui: { find: (q: { type: string; text: RegExp }) => Promise<{ text?: string } | undefined> }, pattern: RegExp) =>
   (await ui.find({ type: 'Text', text: pattern }))?.text
+
+// The folders' chevrons on a surface that paints, as each one's alt names it: `open` or `closed`.
+const chevrons = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) =>
+  ((await ui.findAll({ type: 'Svg' })) as { props: { alt: string } }[]).map(one => one.props.alt).filter(alt => alt === 'open' || alt === 'closed')
 
 test('a read shows in the card and the touched list, on every surface', async ($, on) => {
   engine(on)
@@ -122,6 +140,59 @@ test('a commit turns the card, the pills and the foot green', async ($, on) => {
   await ui.unmount()
 })
 
+test('a commit a hook refuses leaves HEAD alone, and nothing turns green', async ($, on) => {
+  const git: GitWorld = { dirty: [' M src/client.js'], ahead: '0', isRefused: true }
+  engine(on, git)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+  await $.tool.call({ tool: 'Bash', command: 'git commit -am "Raise MAX_RETRIES to 3"' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  expect(await text(ui, /^Claude committed/)).toBeUndefined()
+  expect(await text(ui, /^9f3b210$/)).toBeUndefined()
+  expect(await text(ui, /^ ?Committed ?$/)).toBeUndefined()
+  expect(await text(ui, /^ ?committ(ing|ed \w+) ?$/)).toBeUndefined()
+  expect(await text(ui, /Edited/)).toMatch(/Edited/)
+  await ui.unmount()
+})
+
+test('a commit with -C is read from that repository', async ($, on) => {
+  const git: GitWorld = { dirty: [], ahead: '0', shown: 'lib/util.ts' }
+  const ran: { argv: string[]; cwd?: string }[] = []
+  engine(on, git, [], ran)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/work/other/lib/util.ts', old_string: 'a', new_string: 'b' })
+  await $.tool.call({ tool: 'Bash', command: 'git -C /work/other commit -am "Fix util"' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  expect(await text(ui, /^Claude committed 1 file$/)).toBe('Claude committed 1 file')
+  expect(await text(ui, /Committed/)).toMatch(/Committed/)
+  expect(ran.some(one => one.argv.includes('show') && one.cwd === '/work/other')).toBe(true)
+  await ui.unmount()
+})
+
+test('a redraw does not list the tree again; a command does', async ($, on) => {
+  const listed: string[] = []
+  world(on, { '/proj': [entry('src', 'dir')], '/proj/src': [entry('a.ts', 'file')] }, undefined, listed)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const first = listed.length
+
+  await ui.press({ key: 'refresh' })
+  const afterRefresh = listed.length
+  await ui.press({ key: 'sizes' })
+  expect(listed.length).toBe(afterRefresh)
+  expect(afterRefresh).toBeGreaterThan(first)
+
+  await $.tool.call({ tool: 'Bash', command: 'touch b.ts' })
+  await ui.press({ key: 'sizes' })
+  expect(listed.length).toBeGreaterThan(afterRefresh)
+  await ui.unmount()
+})
+
 test('the first turn sets up /files when session.start never reached the mod', async ($, on) => {
   const registered: string[] = []
   engine(on, undefined, registered)
@@ -177,22 +248,27 @@ test('icons follow VS Code: an exact name, then the longest extension, then a de
   expect(folderIcon('whatever', false)).toBe(SVGS['default-folder'])
 })
 
-test('a file Claude reads opens its folders in the tree, as VS Code reveals it', async ($, on) => {
+test('a file Claude reads opens no folder: only a press on its name does', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
   await $.tool.call({ tool: 'Read', file_path: '/proj/src/client.js' })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const count = async () => ((await ui.findAll({ type: 'Text', text: /^client\.js$/ })) as unknown as unknown[]).length
 
-  // No press on src: the read opened it.
-  const names = (await ui.findAll({ type: 'Text', text: /^client\.js$/ })) as unknown as unknown[]
-  expect(names.length).toBeGreaterThan(1)
+  // Only the touched list names it: src stays closed.
+  expect(await count()).toBe(1)
+  expect(await chevrons(ui)).not.toContain('open')
+
+  await ui.press({ key: 'dir:src' })
+  expect(await count()).toBe(2)
+  expect(await chevrons(ui)).toContain('open')
   await ui.unmount()
 })
 
 // A second world for the tests below: a tree by absolute folder, git's top level for folders outside /proj,
-// and a tool call that can be held open while the test looks.
-const world = (on: Parameters<TestBody>[1], tree: Record<string, ReturnType<typeof entry>[]>, hold?: Promise<void>) => {
+// and a tool call that can be held open while the test looks. `listed` collects every folder listed.
+const world = (on: Parameters<TestBody>[1], tree: Record<string, ReturnType<typeof entry>[]>, hold?: Promise<void>, listed: string[] = []) => {
   on('command.register', () => ({ value: { command: 'files' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -202,7 +278,12 @@ const world = (on: Parameters<TestBody>[1], tree: Record<string, ReturnType<type
 
     return { result: {} }
   })
-  on('fs.list', (_, e) => ({ value: tree[(e as { path: string }).path] ?? [] }))
+  on('fs.list', (_, e) => {
+    const path = (e as { path: string }).path
+    listed.push(path)
+
+    return { value: tree[path] ?? [] }
+  })
   on('process.run', (_, e) => {
     const { argv, init } = e as { argv: string[]; init?: { cwd?: string } }
     const cwd = init?.cwd
@@ -211,22 +292,6 @@ const world = (on: Parameters<TestBody>[1], tree: Record<string, ReturnType<type
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
 }
-
-test('a folder slides open: one more row each frame, its chevron turning', async ($, on) => {
-  const clock = mock.clock(on)
-  world(on, { '/proj': [entry('src', 'dir')], '/proj/src': [entry('a.ts', 'file'), entry('b.ts', 'file'), entry('c.ts', 'file')] })
-  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
-
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await ui.press({ key: 'dir:src' })
-
-  expect(await text(ui, /^a\.ts$/)).toBe('a.ts')
-  expect(await text(ui, /^c\.ts$/)).toBeUndefined()
-
-  await clock.advance(200)
-  expect(await text(ui, /^c\.ts$/)).toBe('c.ts')
-  await ui.unmount()
-})
 
 test('the tree follows Claude into another project and back', async ($, on) => {
   world(on, {
@@ -239,9 +304,10 @@ test('the tree follows Claude into another project and back', async ($, on) => {
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
 
-  // The tree lists the other project, opened down to the file, and offers the way home.
+  // The tree lists the other project, opened down to the edited file, and offers the way home.
   expect(await text(ui, /^ ?other ?$/)).toMatch(/other/)
-  expect((await ui.findAll({ type: 'Text', text: /^util\.ts$/ })).length).toBeGreaterThan(1)
+  expect(await text(ui, /^lib$/)).toBe('lib')
+  expect(await chevrons(ui)).toContain('open')
   expect(await text(ui, /^home\.ts$/)).toBeUndefined()
 
   await ui.press({ key: 'home' })
@@ -286,5 +352,81 @@ test('the card shows the tail of what Claude is thinking as it streams', async (
   expect(await text(ui, /back off/)).toMatch(/back off/)
   // The last piece came within the spacing of the first: it is shown when the step ends.
   expect(await text(ui, /client\.ts first/)).toMatch(/client\.ts first/)
+  await ui.unmount()
+})
+
+test('a quick read stays on the card a moment, not a flash', async ($, on) => {
+  const clock = mock.clock(on)
+  world(on, { '/proj': [entry('a.ts', 'file')] })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await clock.advance(1000)
+  await $.tool.call({ tool: 'Read', file_path: '/proj/a.ts' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  // The read is over, but the card holds it before it says Claude is thinking again.
+  expect(await text(ui, /^Claude is reading a\.ts$/)).toBe('Claude is reading a.ts')
+
+  await clock.advance(800)
+  expect(await text(ui, /^Claude is thinking$/)).toBe('Claude is thinking')
+  await ui.unmount()
+})
+
+test('a file Claude edits opens its folders, so the change is in sight', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  // The touched list and the opened tree both name it.
+  expect(((await ui.findAll({ type: 'Text', text: /^client\.js$/ })) as unknown as unknown[]).length).toBe(2)
+  expect(await chevrons(ui)).toContain('open')
+  await ui.unmount()
+})
+
+test('a folder the person opened stays open when Claude opens another', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  // The person opens tests/ on a drawing made before Claude's edit opens src/.
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+  await ui.press({ key: 'dir:tests' })
+
+  expect((await chevrons(ui)).filter(one => one === 'open')).toHaveLength(2)
+  await ui.unmount()
+})
+
+test('an edit outside the folder the tree shows takes it back to the top, opened down to the file', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  // Up from the project's top shows its parent; Claude then edits a file in src/.
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'up' })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+  expect(await text(ui, /^ ?proj ?$/)).toMatch(/proj/)
+  expect(await chevrons(ui)).toContain('open')
+  await ui.unmount()
+})
+
+test('a press anywhere on a folder row opens it and closes it', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  // The overlay draws no label: the desktop would paint it as text over the chevron and the icon.
+  const buttons = (await ui.findAll({ type: 'Button' })) as unknown as { props: { key?: string; label?: string } }[]
+  const overlays = buttons.filter(one => one.props.key?.startsWith('fold:'))
+  expect(overlays.length).toBeGreaterThan(0)
+  expect(overlays.filter(one => (one.props.label ?? '').trim() !== '')).toEqual([])
+
+  await ui.press({ key: 'fold:src' })
+  expect(await text(ui, /^client\.js$/)).toBe('client.js')
+  await ui.press({ key: 'fold:src' })
+  expect(await text(ui, /^client\.js$/)).toBeUndefined()
   await ui.unmount()
 })

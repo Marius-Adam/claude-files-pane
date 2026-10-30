@@ -8,9 +8,6 @@ export type Now =
   | { verb: 'done'; edited: string[]; read: string[] }
   | { verb: 'committed'; hash: string; files: string[] }
 
-// A folder opening in the tree: its rows appear one by one from `at`, its chevron turns.
-export type Opening = { path: string; at: number; count: number }
-
 // A file Claude touched this turn, its path relative to the working directory.
 export type Touch = { path: string; isEdited: boolean; isActive: boolean; isCommitted: boolean }
 
@@ -47,7 +44,6 @@ declare module 'claude-code' {
       view: Shaped<View>
       git: Shaped<Git | null>
       status: Shaped<Status | null>
-      opening: Shaped<Opening | null>
       tick: number
     }
   }

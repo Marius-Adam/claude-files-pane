@@ -1,13 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Git, Now, Opening, Status, Touch, View } from '../types'
+import type { Git, Now, Status, Touch, View } from '../types'
 import { fileIcon, folderIcon } from './icons'
 
 const PANE = 'files-pane'
 const READS = new Set(['Read'])
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
-const COMMIT = /\bgit\s+(?:-C\s+\S+\s+)?commit\b/
+const COMMIT = /\bgit\s+(?:-C\s+(\S+)\s+)?commit\b/
+const CD = /(?:^|[;&|]\s*)cd\s+(\S+)/g
 const TREE_ROWS = 300
 const MATCHES = 50
 const SKIP = new Set(['.git'])
@@ -38,7 +39,6 @@ const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { sh
 const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-3' })
 const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-3' })
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
-const opening = atom({ plugin: 'files-pane', key: 'opening' } as const, null, { shape: 'opening-1' })
 // Bumped by Refresh so the tree is listed again.
 const tick = atom({ plugin: 'files-pane', key: 'tick' } as const, 0)
 
@@ -141,16 +141,20 @@ const GLYPHS = {
 
 // How the badge moves: a halo while Claude has a file, a spinning arc while it thinks, a check
 // that draws itself when done, a slow breath while idle. SVG animation runs inside an image, so
-// it needs nothing from the surface; a redraw starts it again, which none of these show.
+// it needs nothing from the surface, but a redraw starts it again: each loop therefore begins in
+// the past, at the point the clock has reached, and carries on across a redraw without a jump.
 type Motion = 'pulse' | 'spin' | 'draw' | 'breathe'
 
-const halo = (color: string, delay: string) =>
-  `<circle cx="28" cy="28" r="18" fill="none" stroke="${color}" stroke-width="2" opacity="0"><animate attributeName="r" values="18;27" dur="1.8s" begin="${delay}" repeatCount="indefinite"/><animate attributeName="opacity" values="0.6;0" dur="1.8s" begin="${delay}" repeatCount="indefinite"/></circle>`
+// A loop of `ms` begun so that it stands where it would had it run since the epoch, plus `offset`.
+const phase = (ms: number, offset = 0) => `${(-(((Date.now() + offset) % ms) / 1000)).toFixed(3)}s`
+
+const halo = (color: string, offset: number) =>
+  `<circle cx="28" cy="28" r="18" fill="none" stroke="${color}" stroke-width="2" opacity="0"><animate attributeName="r" values="18;27" dur="1.8s" begin="${phase(1800, offset)}" repeatCount="indefinite"/><animate attributeName="opacity" values="0.6;0" dur="1.8s" begin="${phase(1800, offset)}" repeatCount="indefinite"/></circle>`
 
 const MOTION: Record<Motion, (color: string) => string> = {
-  pulse: color => halo(color, '0s') + halo(color, '0.9s'),
+  pulse: color => halo(color, 0) + halo(color, 900),
   spin: color =>
-    `<circle cx="28" cy="28" r="21" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="34 98"><animateTransform attributeName="transform" type="rotate" from="0 28 28" to="360 28 28" dur="1.1s" repeatCount="indefinite"/></circle>`,
+    `<circle cx="28" cy="28" r="21" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="34 98"><animateTransform attributeName="transform" type="rotate" from="0 28 28" to="360 28 28" dur="1.1s" begin="${phase(1100)}" repeatCount="indefinite"/></circle>`,
   draw: color => `<circle cx="28" cy="28" r="21" fill="none" stroke="${tint(color, '66')}" stroke-width="1.5"/>`,
   breathe: () => '',
 }
@@ -159,10 +163,10 @@ const MOTION: Record<Motion, (color: string) => string> = {
 const badgeSvg = (glyph: keyof typeof GLYPHS, color: string, motion: Motion) => {
   const body =
     motion === 'draw' && glyph === 'check'
-      ? '<path d="M5 12.5l4.5 4.5L19 7.5" stroke-dasharray="24" stroke-dashoffset="24"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="0.6s" begin="0.15s" fill="freeze"/></path>'
+      ? `<path d="M5 12.5l4.5 4.5L19 7.5" stroke-dasharray="24" stroke-dashoffset="24"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="0.6s" begin="${((150 - (Date.now() - shownAt)) / 1000).toFixed(3)}s" fill="freeze"/></path>`
       : GLYPHS[glyph]
   const breath =
-    motion === 'breathe' ? '<animate attributeName="opacity" values="1;0.5;1" dur="3.2s" repeatCount="indefinite"/>' : ''
+    motion === 'breathe' ? `<animate attributeName="opacity" values="1;0.5;1" dur="3.2s" begin="${phase(3200)}" repeatCount="indefinite"/>` : ''
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 56 56" fill="none" stroke-linecap="round" stroke-linejoin="round"><defs><radialGradient id="g" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="${color}" stop-opacity="0.45"/><stop offset="1" stop-color="${color}" stop-opacity="0.12"/></radialGradient></defs>${MOTION[motion](color)}<circle cx="28" cy="28" r="18" fill="url(#g)"/><circle cx="28" cy="28" r="17.5" stroke="${tint(color, '59')}"/><g transform="translate(18 18) scale(0.8333)" stroke="${color}" stroke-width="2.2">${body}${breath}</g></svg>`
 }
@@ -170,13 +174,13 @@ const badgeSvg = (glyph: keyof typeof GLYPHS, color: string, motion: Motion) => 
 // A band of light sweeping across a row Claude is working on. Stretched to the row by
 // preserveAspectRatio="none" and clipped to its rounded corners.
 const shimmerSvg = (color: string, width: number, height: number) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 100 10" preserveAspectRatio="none"><defs><linearGradient id="s" x1="0" x2="1"><stop offset="0" stop-color="${color}" stop-opacity="0"/><stop offset="0.5" stop-color="${color}" stop-opacity="0.3"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><rect x="-35" y="0" width="35" height="10" fill="url(#s)"><animate attributeName="x" values="-35;100" dur="1.6s" repeatCount="indefinite"/></rect></svg>`
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 100 10" preserveAspectRatio="none"><defs><linearGradient id="s" x1="0" x2="1"><stop offset="0" stop-color="${color}" stop-opacity="0"/><stop offset="0.5" stop-color="${color}" stop-opacity="0.3"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><rect x="-35" y="0" width="35" height="10" fill="url(#s)"><animate attributeName="x" values="-35;100" dur="1.6s" begin="${phase(1600)}" repeatCount="indefinite"/></rect></svg>`
 
 // A small dot: pulsing while live, still otherwise.
 const dotSvg = (color: string, isLive: boolean) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12">${
     isLive
-      ? `<circle cx="6" cy="6" r="3" fill="${color}" opacity="0"><animate attributeName="r" values="3;6" dur="1.4s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.5;0" dur="1.4s" repeatCount="indefinite"/></circle>`
+      ? `<circle cx="6" cy="6" r="3" fill="${color}" opacity="0"><animate attributeName="r" values="3;6" dur="1.4s" begin="${phase(1400)}" repeatCount="indefinite"/><animate attributeName="opacity" values="0.5;0" dur="1.4s" begin="${phase(1400)}" repeatCount="indefinite"/></circle>`
       : ''
   }<circle cx="6" cy="6" r="3" fill="${color}"/></svg>`
 
@@ -198,10 +202,12 @@ const WRITE = '#5fb3b3'
 const glyphOf = (tool: string): keyof typeof GLYPHS =>
   tool === 'Bash' ? 'terminal' : tool === 'Grep' || tool === 'Glob' || tool === 'WebSearch' ? 'search' : tool === 'WebFetch' ? 'globe' : 'spark'
 
-// A folder's chevron, turned `angle` degrees: 0 closed, 90 open, in between while it opens.
-const chevronSvg = (angle: number) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path d="M4.5 2.75L7.75 6L4.5 9.25" fill="none" stroke="${MUTED}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="rotate(${angle} 6 6)"/></svg>`
+// A folder's chevron, closed and open: a thin stroke as in VS Code, turned down when open; the
+// terminal draws a glyph instead.
+const chevronSvg = (isOpen: boolean) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path d="M4.5 2.75L7.75 6L4.5 9.25" fill="none" stroke="${MUTED}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" transform="rotate(${isOpen ? 90 : 0} 6 6)"/></svg>`
 const BLANK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"/>'
+const CARETS = ['▸', '▾'] as const
 
 // The folder above `dir`, which may climb past the project as `..` segments.
 const parentOf = (dir: string) => {
@@ -267,10 +273,23 @@ const tailOf = (text: string, max = 140) => {
   return `…${cut.slice(cut.indexOf(' ') + 1)}`
 }
 
-const isCommit = (e: { tool: string }) => {
+// The folder a `git commit` runs in, absolute: its `-C` folder, else the last `cd` before it, else
+// the session's. Null when the call is no commit. A folder from `~` cannot be told: the session's.
+const commitDir = (e: { tool: string }, cwd: string) => {
   const command = (e as unknown as Record<string, unknown>).command
 
-  return e.tool === 'Bash' && typeof command === 'string' && COMMIT.test(command)
+  if (e.tool !== 'Bash' || typeof command !== 'string') return null
+
+  const match = command.match(COMMIT)
+
+  if (!match) return null
+
+  const named = match[1] ?? [...command.slice(0, match.index).matchAll(CD)].pop()?.[1]
+  const dir = named?.replace(/^(['"])(.*)\1$/, '$2')
+
+  if (!dir || dir.startsWith('~')) return cwd
+
+  return dir.startsWith('/') ? dir : join(cwd, dir)
 }
 
 const upsert = (list: Touch[], path: string, isEdit: boolean): Touch[] => {
@@ -281,51 +300,41 @@ const upsert = (list: Touch[], path: string, isEdit: boolean): Touch[] => {
   return old ? list.map(one => (one.path === path ? touch : one)) : [...list, touch].slice(-100)
 }
 
-// The tree opened down to a file Claude picked up, as VS Code reveals the active file: every
-// folder above it, from the folder shown. A file outside the project opens nothing.
-const reveal = (old: View, path: string): View => {
-  if (path.startsWith('/') || path.startsWith('../')) return old
-
-  const parts = path.split('/').slice(0, -1)
-  const folders = parts.map((_, i) => parts.slice(0, i + 1).join('/')).filter(dir => !old.dir || dir.startsWith(`${old.dir}/`))
-  const missing = folders.filter(dir => !old.expanded.includes(dir))
-
-  return missing.length === 0 ? old : { ...old, expanded: [...old.expanded, ...missing] }
-}
-
-// A folder opening shows one more of its rows each frame, so the list slides open; after the
-// last frame the cascade is cleared and the folder draws whole.
-const FRAME_MS = 28
-const FRAMES = 12
-let cascade: { cancel: () => void } | null = null
-
-const startOpening = async ($: EngineInterface, path: string) => {
-  cascade?.cancel()
-  await update($, opening, () => ({ path, at: Date.now(), count: 1 }))
-  redraw($)
-
-  // Without a clock (a host that refuses timers), the folder simply opens whole.
-  try {
-    const timer = $.clock.every(FRAME_MS, () => {
-      void update($, opening, old => (old && old.path === path && old.count < FRAMES ? { ...old, count: old.count + 1 } : null)).then(next => {
-        if (!next) timer.cancel()
-        redraw($)
-      })
-    })
-
-    cascade = timer
-  } catch {
-    await update($, opening, () => null)
-    redraw($)
-  }
-}
-
 // The folder to list, absolute: `dir` under `home`, the project shown. (Listed with no path,
 // a host may answer for its own folder rather than the session's.)
 const listPath = (home: string, dir: string) => (dir ? join(home, dir) : home)
 
 const run = ($: EngineInterface, argv: string[], timeoutMs = 10000, cwd?: string) =>
   $.process.run(argv, { timeoutMs, ...(cwd ? { cwd } : {}) }).catch(() => null)
+
+// The commit HEAD names in `cwd`, short; null where there is none.
+const headOf = async ($: EngineInterface, cwd: string) => {
+  const head = await run($, ['git', 'rev-parse', '--short', 'HEAD'], 5000, cwd)
+
+  return head && head.exitCode === 0 ? head.stdout.trim() || null : null
+}
+
+type Entry = Awaited<ReturnType<EngineInterface['fs']['list']>>[number]
+
+// Folder listings, kept between redraws: the pane draws several times a second while Claude streams
+// or a folder slides open, and the folders have not changed. Keyed by absolute path; a failed
+// listing is not kept.
+const listings = new Map<string, Promise<Entry[]>>()
+
+const listDir = ($: EngineInterface, path: string) => {
+  let listing = listings.get(path)
+
+  if (!listing) {
+    listing = $.fs.list(path).catch(() => {
+      listings.delete(path)
+
+      return []
+    })
+    listings.set(path, listing)
+  }
+
+  return listing
+}
 
 // Git as the project shown sees it: `root`, or the session's folder when empty.
 const readGit = async ($: EngineInterface, root: string): Promise<Git | null> => {
@@ -400,6 +409,13 @@ const indexFiles = async ($: EngineInterface, home: string): Promise<string[]> =
   return found
 }
 
+// What the pane holds of the disk, dropped whenever it may have changed: search's index and the
+// tree's listings.
+const forget = () => {
+  fileIndex = null
+  listings.clear()
+}
+
 // A pane draws again only when asked: every write below ends with this.
 const redraw = ($: EngineInterface) => $.ui.invalidate('ui.render')
 
@@ -415,9 +431,27 @@ const openPane = async ($: EngineInterface) => {
   return $.ui.open({ id: PANE, title: `Files: ${base(cwd) || 'project'}` })
 }
 
-// The tree follows Claude: a file in another project moves it to that project (its git root, else
-// the file's folder), a file back home moves it home, and either way it opens down to the file.
-const follow = async ($: EngineInterface, cwd: string, abs: string) => {
+// The folders above `path` (relative to the project shown) that the tree has not opened, from the
+// folder shown down. A file outside the project has none.
+const closedAbove = (old: View, path: string) => {
+  if (path.startsWith('/') || path.startsWith('../')) return []
+
+  const parts = path.split('/').slice(0, -1)
+
+  return parts
+    .map((_, i) => parts.slice(0, i + 1).join('/'))
+    .filter(dir => (!old.dir || dir.startsWith(`${old.dir}/`)) && !old.expanded.includes(dir))
+}
+
+// Whether the tree, showing the folder `dir`, has `path` in it: the project's top shows everything.
+const isUnder = (dir: string, path: string) => !path.startsWith('../') && (dir === '' || path.startsWith(`${dir}/`))
+
+// The tree follows Claude between projects: a file in another project moves it to that project (its
+// git root, else the file's folder), a file back home moves it home. A file Claude edits opens the
+// folders down to it, so the change is in sight; a file it only reads opens none, and its closed
+// folder shows Claude at work inside with a dot. An edit outside the folder the tree shows takes it
+// back to the project's top. Resolves the edited file's tree path, for the pane to scroll to.
+const follow = async ($: EngineInterface, cwd: string, abs: string, isEdit: boolean): Promise<string | null> => {
   const old = await read($, view)
   const shown = old.root || cwd
   let root = old.root
@@ -432,18 +466,66 @@ const follow = async ($: EngineInterface, cwd: string, abs: string) => {
   }
 
   const isMoved = root !== old.root
-  const start = isMoved ? { ...old, root, dir: '', expanded: [] } : old
-  const next = reveal(start, abs.slice((root || cwd).length + 1))
-  await update($, view, () => next)
+  const path = abs.slice((root || cwd).length + 1)
+  const isOut = isEdit && !isMoved && !isUnder(old.dir, path)
+  const start = isMoved ? { ...old, root, dir: '', expanded: [] } : isOut ? { ...old, dir: '' } : old
+  const opened = isEdit ? closedAbove(start, path) : []
+
+  if (isMoved || isOut || opened.length > 0) {
+    // Merged into the newest view, so a folder the person opened meanwhile stays open.
+    await update($, view, now => (isMoved || isOut ? { ...start, expanded: [...start.expanded, ...opened] } : { ...now, expanded: [...now.expanded, ...opened.filter(dir => !now.expanded.includes(dir))] }))
+  }
 
   if (isMoved) {
-    fileIndex = null
+    forget()
     void refreshGit($)
   }
 
-  // The deepest folder it opened slides open; the ones above it open at once.
-  const opened = next.expanded.filter(dir => !start.expanded.includes(dir))
-  if (opened.length > 0) await startOpening($, opened[opened.length - 1]!)
+  return isEdit ? path : null
+}
+
+// Brings a row of the tree into sight in the pane, once it is drawn. A pane not placed, or a
+// surface that does not scroll, refuses; nothing depends on it.
+const reveal = ($: EngineInterface, path: string) => $.ui.scroll({ in: PANE, to: { key: `row:${path}` }, block: 'nearest' }).catch(() => ({}))
+
+// The card changes through `setNow` alone, which holds each state at least DWELL_MS: a quick tool
+// call would otherwise flash past, and a stream redraw the card many times a second. `wanted` is
+// the newest state asked for; while a state is held, the newest one waits and then shows.
+const DWELL_MS = 700
+let wanted: Now | null | undefined
+let shownAt = 0
+let isHeld = false
+
+const showNow = async ($: EngineInterface) => {
+  const value = wanted ?? null
+
+  shownAt = Date.now()
+  await update($, now, () => value).catch(() => {})
+  redraw($)
+}
+
+// `fn` maps the newest state asked for (not the one on screen) to the next.
+const setNow = async ($: EngineInterface, fn: (old: Now | null) => Now | null) => {
+  if (wanted === undefined) wanted = await read($, now).catch(() => null)
+
+  wanted = fn(wanted)
+
+  if (isHeld) return
+
+  const wait = shownAt + DWELL_MS - Date.now()
+
+  if (wait <= 0) return showNow($)
+
+  // Without a clock the state shows at once.
+  isHeld = true
+  void $.clock
+    .sleep(wait)
+    .catch(() => {})
+    .then(() => {
+      isHeld = false
+
+      return showNow($)
+    })
 }
 
 // The card between tools: what this turn has done so far.
@@ -468,6 +550,7 @@ const setUp = async ($: EngineInterface) => {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    forget()
     await setUp($).catch(() => {})
 
     return next(e)
@@ -480,60 +563,66 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    if (isCommit(e)) {
+    // The pane's bookkeeping never stands between Claude and its tool: a failure here is dropped.
+    const cwd = await $.session.cwd().catch(() => '')
+    const repo = commitDir(e, cwd)
+
+    if (repo !== null) {
+      // HEAD before, so a commit that does not happen is not taken for one.
+      const before = await headOf($, repo).catch(() => null)
       await update($, status, () => ({ verb: 'committing' }) as const).catch(() => {})
       redraw($)
 
       try {
         return await next(e)
       } finally {
-        await afterCommit($).catch(() => {})
+        await afterCommit($, cwd, repo, before).catch(() => {})
       }
     }
 
     const hit = touchOf(e)
-    // The pane's bookkeeping never stands between Claude and its tool: a failure here is dropped.
-    const cwd = await $.session.cwd().catch(() => '')
 
     if (!hit) {
       const doing: Now = { verb: 'working', tool: e.tool, ...describe(e, cwd) }
-      await update($, now, () => doing).catch(() => {})
-      redraw($)
+      await setNow($, () => doing)
 
       try {
         return await next(e)
       } finally {
         // Back to what the turn has done, unless something newer took the card meanwhile.
         const list = await read($, touched).catch(() => [])
-        await update($, now, old => (old === null || (old.verb === 'working' && old.tool === e.tool) ? between(list) : old)).catch(() => {})
+        await setNow($, old => (old === null || (old.verb === 'working' && old.tool === e.tool) ? between(list) : old))
+        // A command may have made, moved or removed files: the tree lists its folders again.
+        forget()
         redraw($)
       }
     }
 
     const abs = hit.path.startsWith('/') ? hit.path : join(cwd, hit.path)
     const path = rel(cwd, abs)
-    await update($, now, () => ({ verb: hit.isEdit ? 'editing' : 'reading', path }) as const).catch(() => {})
+    await setNow($, () => ({ verb: hit.isEdit ? 'editing' : 'reading', path }))
     await update($, touched, list => upsert(list, path, hit.isEdit)).catch(() => {})
-    await follow($, cwd, abs).catch(() => {})
+    const shown = await follow($, cwd, abs, hit.isEdit).catch(() => null)
     redraw($)
+    if (shown) void reveal($, shown)
 
     try {
       return await next(e)
     } finally {
       const list = await update($, touched, old => old.map(one => (one.path === path ? { ...one, isActive: false } : one))).catch(() => null)
 
-      if (list && !list.some(one => one.isActive)) await update($, now, () => between(list)).catch(() => {})
+      if (list && !list.some(one => one.isActive)) await setNow($, () => between(list))
       redraw($)
 
       if (hit.isEdit) {
-        fileIndex = null
+        forget()
         void refreshGit($)
       }
     }
   })
 
-  // What Claude thinks and writes, as it streams: the card shows its latest words. Updates are
-  // spaced out so a fast stream redraws a few times a second, not on every piece.
+  // What Claude thinks and writes, as it streams: the card shows its latest words, as often as
+  // `setNow` lets it, and the last of them once the stream ends.
   on('turn.step', async function* ($, e, next) {
     const stream = next(e)
 
@@ -541,43 +630,20 @@ export const register: Register = on => {
 
     let thought = ''
     let answer = ''
-    let shownAt = 0
-    // The newest words held back by the spacing, shown when the step ends so the last of them is
-    // what the card keeps.
-    let held: Now | null = null
-    const put = (value: Now) =>
-      void update($, now, () => value)
-        .then(() => redraw($))
-        .catch(() => {})
-    const show = (value: Now) => {
-      const at = Date.now()
-
-      if (at - shownAt < 300) {
-        held = value
-        return
-      }
-      shownAt = at
-      held = null
-      put(value)
-    }
 
     for (;;) {
       const step = await stream.next()
 
-      if (step.done) {
-        if (held) put(held)
-
-        return step.value
-      }
+      if (step.done) return step.value
 
       const chunk = step.value
 
       if (chunk.kind === 'thinking') {
         thought += chunk.text
-        show({ verb: 'thinking', thought: tailOf(thought) })
+        void setNow($, () => ({ verb: 'thinking', thought: tailOf(thought) }))
       } else if (chunk.kind === 'text') {
         answer += chunk.text
-        show({ verb: 'writing', text: tailOf(answer) })
+        void setNow($, () => ({ verb: 'writing', text: tailOf(answer) }))
       }
 
       yield chunk
@@ -589,7 +655,7 @@ export const register: Register = on => {
 
     if (!e.agentId) {
       await update($, touched, () => [])
-      await update($, now, () => ({ verb: 'thinking' }) as const)
+      await setNow($, () => ({ verb: 'thinking' }))
       await update($, status, () => null)
       redraw($)
     }
@@ -603,14 +669,13 @@ export const register: Register = on => {
     await update($, touched, () => list)
 
     // A commit this turn stays the card's news; otherwise the turn's summary.
-    if ((await read($, now))?.verb !== 'committed') {
-      await update($, now, () => ({
-        verb: 'done' as const,
-        edited: list.filter(one => one.isEdited).map(one => one.path),
-        read: list.filter(one => !one.isEdited).map(one => one.path),
-      }))
-    }
+    await setNow($, old =>
+      old?.verb === 'committed'
+        ? old
+        : { verb: 'done', edited: list.filter(one => one.isEdited).map(one => one.path), read: list.filter(one => !one.isEdited).map(one => one.path) },
+    )
 
+    forget()
     void refreshGit($)
 
     return result
@@ -625,7 +690,6 @@ export const register: Register = on => {
     const Svg = e.surface !== 'terminal' && 'Svg' in elements ? elements.Svg : null
     const [cur, list, v, g, foot] = await Promise.all([read($, now), read($, touched), read($, view), read($, git), read($, status)])
     await read($, tick)
-    const op = await read($, opening)
     const cwd = await $.session.cwd()
     // The project the tree shows: the session's folder, or the one it followed Claude to.
     const home = v.root || cwd
@@ -642,16 +706,18 @@ export const register: Register = on => {
       await update($, view, old => ({ ...old, ...patch }))
       redraw($)
       if (patch.root !== undefined && patch.root !== v.root) {
-        fileIndex = null
+        forget()
         void refreshGit($)
       }
     }
 
+    // From the newest view, not this drawing's: a folder Claude opened since stays open.
     const toggle = async (path: string) => {
-      const isOpen = v.expanded.includes(path)
-
-      await setView({ expanded: isOpen ? v.expanded.filter(one => one !== path) : [...v.expanded, path] })
-      if (!isOpen) await startOpening($, path)
+      await update($, view, old => ({
+        ...old,
+        expanded: old.expanded.includes(path) ? old.expanded.filter(one => one !== path) : [...old.expanded, path],
+      }))
+      redraw($)
     }
 
     // Every Svg names itself in `alt`: the desktop drops one whose alt is empty.
@@ -671,14 +737,31 @@ export const register: Register = on => {
       )
     }
 
-    // A toolbar action: quiet text that a press runs, dimmer when it would change nothing.
-    const tool = (key: string, label: string, onPress: () => unknown, isIdle = false) => (
-      <Button key={key} plain label={label} onPress={onPress}>
-        <Text size="footnote" color={isIdle ? undefined : MUTED} dimColor={isIdle}>
-          {label}
-        </Text>
-      </Button>
-    )
+    // A toolbar action: a small rounded chip a press runs, tinted while the setting it switches is
+    // on. The desktop draws the Button inside as its own control, in its own color and with its
+    // own hover, so the chip pads it all round and the Button is dim unless its setting is on.
+    const tool = (key: string, label: string, onPress: () => unknown, state: 'on' | 'off' | 'idle' = 'off') => {
+      const button = (
+        <Button key={key} plain dimColor={state !== 'on'} onPress={onPress}>
+          <Text size="footnote">{label}</Text>
+        </Button>
+      )
+
+      return isRich ? (
+        <Box
+          key={`chip:${key}`}
+          {...rounded(state === 'on' ? tint(FOLDER, '59') : CARD_EDGE)}
+          backgroundColor={state === 'on' ? tint(FOLDER, '1f') : HOVER}
+          paddingX="xs"
+          paddingY={0}
+          hover={{ backgroundColor: state === 'on' ? tint(FOLDER, '2e') : 'userMessageBackgroundHover' }}
+        >
+          {button}
+        </Box>
+      ) : (
+        button
+      )
+    }
 
     // A surface that paints (not the terminal, where a border is box-drawing characters three rows
     // tall): it gets rounded pills and rows, soft cards and moving badges.
@@ -686,8 +769,42 @@ export const register: Register = on => {
     // A bordered Box is what the desktop rounds; a clear border keeps the corner without a line.
     const rounded = (color = CLEAR) => (isRich ? ({ borderStyle: 'round', borderColor: color } as const) : {})
 
-    const dot = (color: string, isLive = false) =>
-      Svg ? <Svg source={dotSvg(color, isLive)} alt={isLive ? 'live' : 'mark'} width={12} height={12} /> : <Text color={color}>●</Text>
+    // A folder's chevron, which a file row draws blank so a file's icon lines up with a folder's.
+    // Where the surface paints it is a thin SVG stroke, and a press on the folder's name opens it;
+    // only a Button takes a press and a Button holds only text, so the terminal's is a glyph.
+    const chevron = (isOpen = false, onPress?: () => unknown, key?: string) =>
+      Svg ? (
+        <Svg source={onPress ? chevronSvg(isOpen) : BLANK_SVG} alt={onPress ? (isOpen ? 'open' : 'closed') : 'file'} width={12} height={12} />
+      ) : (
+        <Box width={2} flexShrink={0} justifyContent="center" alignItems="center">
+          {onPress && (
+            <Button key={key} plain dimColor onPress={onPress}>
+              <Text mono size="caption">
+                {CARETS[isOpen ? 1 : 0]}
+              </Text>
+            </Button>
+          )}
+        </Box>
+      )
+
+    // A press anywhere on a row, where the surface paints: a Button holds only text, so a row with
+    // icons cannot be one. Laid over the row instead, a clear Button of blank text wider than any
+    // row, which the row cuts to size; the row's own hover still shows under it. (Non-breaking
+    // spaces, which a surface does not collapse.) No `label`: the desktop draws a label as text,
+    // over the chevron and the icon; the key is its address.
+    const pressAnywhere = (key: string, onPress: () => unknown) =>
+      isRich ? (
+        <Box position="absolute" top={0} left={0} right={0} bottom={0} flexDirection="column" overflow="hidden">
+          <Button key={key} plain onPress={onPress}>
+            <Text color={CLEAR} wrap="truncate-end">
+              {' '.repeat(Math.max(80, e.props.bodyColumns * 2))}
+            </Text>
+          </Button>
+        </Box>
+      ) : null
+
+    const dot = (color: string, isLive = false, size = 12) =>
+      Svg ? <Svg source={dotSvg(color, isLive)} alt={isLive ? 'live' : 'mark'} width={size} height={size} /> : <Text color={color}>●</Text>
 
     // The shimmer over a row, laid on top of it and clipped by it: the row is `overflow="hidden"`.
     // Wider and taller than any row, so it always covers; the row cuts it to size.
@@ -699,12 +816,13 @@ export const register: Register = on => {
         </Box>
       ) : null
 
-    // A rounded chip of a color's tint, a live one with a pulsing dot.
-    const pill = (label: string, color: string, isLive = false) =>
+    // A rounded chip of a color's tint, a live one with a pulsing dot. A compact one, for a tree row,
+    // is a size smaller so the row keeps room around it rather than growing to its height.
+    const pill = (label: string, color: string, isLive = false, isCompact = false) =>
       isRich ? (
         <Box {...rounded(tint(color, '4d'))} backgroundColor={tint(color, '1f')} paddingX={1} paddingY={0} gap="xs" alignItems="center">
-          {isLive && dot(color, true)}
-          <Text color={color} size="footnote" weight="semibold">
+          {isLive && dot(color, true, isCompact ? 10 : 12)}
+          <Text color={color} size={isCompact ? 'caption' : 'footnote'} weight="semibold">
             {label}
           </Text>
         </Box>
@@ -737,7 +855,7 @@ export const register: Register = on => {
           glyph: 'idle' as const,
           motion: 'breathe' as const,
           title: 'Waiting for Claude',
-          sub: <Text dimColor>nothing touched yet</Text>,
+          sub: 'nothing touched yet',
         }
       }
 
@@ -751,13 +869,13 @@ export const register: Register = on => {
           motion: 'spin' as const,
           title: 'Claude is thinking',
           sub: cur.thought ? (
-            <Text dimColor italic size="footnote">
+            <Text dimColor italic size="footnote" wrap="truncate-start">
               {cur.thought}
             </Text>
           ) : opened > 0 ? (
-            <Text dimColor>opened {plural(opened, 'file')}</Text>
+            `opened ${plural(opened, 'file')}`
           ) : (
-            <Text dimColor>in {project}</Text>
+            `in ${project}`
           ),
         }
       }
@@ -770,7 +888,7 @@ export const register: Register = on => {
           motion: 'pulse' as const,
           title: 'Claude is writing',
           sub: (
-            <Text dimColor size="footnote">
+            <Text dimColor size="footnote" wrap="truncate-start">
               {cur.text}
             </Text>
           ),
@@ -789,7 +907,7 @@ export const register: Register = on => {
               {cur.detail}
             </Text>
           ) : (
-            <Text dimColor>{cur.tool}</Text>
+            cur.tool
           ),
         }
       }
@@ -801,7 +919,7 @@ export const register: Register = on => {
           glyph: 'check' as const,
           motion: 'draw' as const,
           title: `Claude committed ${plural(cur.files.length, 'file')}`,
-          sub: <Text dimColor>{cur.hash}</Text>,
+          sub: cur.hash,
         }
       }
 
@@ -813,7 +931,7 @@ export const register: Register = on => {
             glyph: 'check' as const,
             motion: 'draw' as const,
             title: cur.read.length > 0 ? `Claude read ${plural(cur.read.length, 'file')}` : 'Claude touched no files',
-            sub: <Text dimColor>nothing changed</Text>,
+            sub: 'nothing changed',
           }
         }
 
@@ -832,11 +950,11 @@ export const register: Register = on => {
           title: `Claude edited ${plural(cur.edited.length, 'file')}`,
           sub:
             one && pair ? (
-              <Text dimColor>
+              <Text dimColor size="footnote" wrap="truncate-end">
                 {one} <Text color={ADDED}>+{pair[0]}</Text> <Text color={REMOVED}>−{pair[1]}</Text>
               </Text>
             ) : (
-              <Text dimColor wrap="truncate-end">
+              <Text dimColor size="footnote" wrap="truncate-end">
                 {cur.edited.slice(0, 2).map(base).join(', ')}
                 {cur.edited.length > 2 ? ` and ${cur.edited.length - 2} more` : ''}
                 {opened}
@@ -853,11 +971,7 @@ export const register: Register = on => {
         glyph: isEdit ? ('pencil' as const) : ('eye' as const),
         motion: 'pulse' as const,
         title: `Claude is ${cur.verb} ${base(cur.path)}`,
-        sub: (
-          <Text dimColor wrap="truncate-start">
-            in {where(dirOf(cur.path)) || project}
-          </Text>
-        ),
+        sub: `in ${where(dirOf(cur.path)) || project}`,
       }
     })()
 
@@ -879,15 +993,12 @@ export const register: Register = on => {
     // The tree under v.dir, open folders listed in place, up to TREE_ROWS rows.
     const rows: JSX.Element[] = []
     const walk = async (dir: string, depth: number): Promise<void> => {
-      const entries = await $.fs.list(listPath(home, dir)).catch(() => [])
+      const entries = await listDir($, listPath(home, dir))
       const sorted = entries
         .filter(entry => !SKIP.has(entry.name) || v.showHidden)
         .filter(entry => v.showHidden || !entry.name.startsWith('.'))
         .sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name))
-      // A folder sliding open shows its first rows only; the cascade adds one each frame.
-      const shown = op && op.path === dir ? sorted.slice(0, op.count) : sorted
-
-      for (const entry of shown) {
+      for (const entry of sorted) {
         if (rows.length >= TREE_ROWS) return
 
         const path = join(dir, entry.name)
@@ -908,24 +1019,15 @@ export const register: Register = on => {
               gap={1}
               paddingX={1}
               paddingY={0}
+              overflow="hidden"
               hover={{ backgroundColor: HOVER }}
             >
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
-                {Svg ? (
-                  <Svg
-                    source={chevronSvg(isOpen ? (op?.path === path ? Math.min(90, ((Date.now() - op.at) / 150) * 90) : 90) : 0)}
-                    alt={isOpen ? 'open' : 'closed'}
-                    width={12}
-                    height={12}
-                  />
-                ) : (
-                  <Button key={`caret:${path}`} plain onPress={() => toggle(path)}>
-                    <Text dimColor mono size="caption">
-                      {isOpen ? '▾' : '▸'}
-                    </Text>
-                  </Button>
-                )}
-                {icon(folderIcon(entry.name, isOpen), entry.name, '▪', folderColor, 16)}
+                {/* The chevron sits close to the folder's icon; a press on it or the name opens it. */}
+                <Box gap="xs" alignItems="center">
+                  {chevron(isOpen, () => toggle(path), `caret:${path}`)}
+                  {icon(folderIcon(entry.name, isOpen), entry.name, '▪', folderColor, 16)}
+                </Box>
                 <Button key={`dir:${path}`} plain onPress={() => toggle(path)}>
                   <Text color={active ? accentOf(active) : count > 0 ? DIRTY : undefined} dimColor={!active && count === 0 && isIgnored(path, true)}>
                     {entry.name}
@@ -942,6 +1044,7 @@ export const register: Register = on => {
                   )}
                 </Box>
               )}
+              {pressAnywhere(`fold:${path}`, () => toggle(path))}
             </Box>,
           )
 
@@ -953,8 +1056,8 @@ export const register: Register = on => {
           // The row's tint: strong while Claude has the file or just committed it, faint once it let go.
           const background = touch ? tint(accentOf(touch), touch.isActive || touch.isCommitted ? '2e' : '14') : undefined
           const right = (() => {
-            if (touch?.isActive) return pill(touch.isEdited ? 'editing' : 'reading', accentOf(touch), true)
-            if (touch?.isCommitted) return pill('committed', DONE)
+            if (touch?.isActive) return pill(touch.isEdited ? 'editing' : 'reading', accentOf(touch), true, true)
+            if (touch?.isCommitted) return pill('committed', DONE, false, true)
             if (isDirty && g?.lines[path]) return counts(path)
             if (v.showSizes) return <Text dimColor tabular size="footnote">{sizeOf(entry.size)}</Text>
 
@@ -977,14 +1080,10 @@ export const register: Register = on => {
               {touch?.isActive && shimmer(accentOf(touch))}
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
                 {/* The chevron's width, unseen, so a file's icon lines up with its folder's. */}
-                {Svg ? (
-                  <Svg source={BLANK_SVG} alt="indent" width={12} height={12} />
-                ) : (
-                  <Text mono size="caption" color={CLEAR}>
-                    ▸
-                  </Text>
-                )}
-                {chip(entry.name)}
+                <Box gap="xs" alignItems="center">
+                  {chevron()}
+                  {chip(entry.name)}
+                </Box>
                 <Text
                   color={accent}
                   dimColor={!accent && isIgnored(path, false)}
@@ -1052,7 +1151,13 @@ export const register: Register = on => {
               <Text weight="bold" size="heading" wrap="truncate-end">
                 {card.title}
               </Text>
-              {card.sub}
+              {typeof card.sub === 'string' ? (
+                <Text dimColor size="footnote" wrap="truncate-end">
+                  {card.sub}
+                </Text>
+              ) : (
+                card.sub
+              )}
             </Box>
           </Box>
 
@@ -1120,18 +1225,18 @@ export const register: Register = on => {
           />
         )}
 
-        <Box columnGap={2} rowGap={0} flexWrap="wrap" paddingX={1}>
-          {tool('refresh', 'Refresh', async () => {
-            fileIndex = null
+        <Box columnGap={isRich ? 'xs' : 2} rowGap="xs" flexWrap="wrap" paddingX={isRich ? 0 : 1} alignItems="center">
+          {tool('refresh', '↻ Refresh', async () => {
+            forget()
             await refreshGit($)
             await update($, tick, n => n + 1)
             redraw($)
           })}
-          {tool('collapse', 'Collapse all', () => setView({ expanded: [] }), v.expanded.length === 0)}
-          {tool('sizes', v.showSizes ? 'Dates' : 'Sizes', () => setView({ showSizes: !v.showSizes }))}
-          {tool('hidden', v.showHidden ? 'Hide dotfiles' : 'Show dotfiles', () => setView({ showHidden: !v.showHidden }))}
-          {tool('up', 'Up a folder', () => setView({ dir: parentOf(v.dir), expanded: [] }))}
-          {(v.dir !== '' || v.root !== '') && tool('home', 'Back to project', () => setView({ root: '', dir: '', expanded: [] }))}
+          {tool('collapse', '⊟ Collapse', () => setView({ expanded: [] }), v.expanded.length === 0 ? 'idle' : 'off')}
+          {tool('up', '↑ Up', () => setView({ dir: parentOf(v.dir), expanded: [] }))}
+          {(v.dir !== '' || v.root !== '') && tool('home', '⌂ Project', () => setView({ root: '', dir: '', expanded: [] }))}
+          {tool('sizes', 'Sizes', () => setView({ showSizes: !v.showSizes }), v.showSizes ? 'on' : 'off')}
+          {tool('hidden', 'Dotfiles', () => setView({ showHidden: !v.showHidden }), v.showHidden ? 'on' : 'off')}
         </Box>
 
         <Box flexDirection="column" borderStyle="round" borderColor={CARD_EDGE} backgroundColor={isRich ? CARD : undefined} gap="xs">
@@ -1150,7 +1255,7 @@ export const register: Register = on => {
               alignItems="center"
               gap={1}
               paddingX={1}
-              paddingY={isRich ? 'xs' : 0}
+              paddingY={0}
               overflow="hidden"
               hover={{ backgroundColor: one.isActive ? tint(accentOf(one), '2e') : 'userMessageBackgroundHover' }}
             >
@@ -1212,25 +1317,32 @@ export const register: Register = on => {
   })
 }
 
-// After Claude's `git commit`: the hash at the foot, the committed files marked green, the card's news.
-async function afterCommit($: EngineInterface): Promise<void> {
-  const head = await run($, ['git', 'rev-parse', '--short', 'HEAD'], 5000)
-  const shown = await run($, ['git', 'show', '--name-only', '--relative', '--format=', 'HEAD'], 5000)
+// After Claude's `git commit` in `repo`: the hash at the foot, the committed files marked green, the
+// card's news. A commit refused (by a hook, or with nothing to commit) leaves HEAD at `before`, and
+// then nothing turns green.
+async function afterCommit($: EngineInterface, cwd: string, repo: string, before: string | null): Promise<void> {
+  const hash = await headOf($, repo)
 
-  if (!head || head.exitCode !== 0) {
+  if (!hash || hash === before) {
     await update($, status, () => null)
     redraw($)
 
     return
   }
 
-  const hash = head.stdout.trim()
+  // The commit's files name paths from the repository's top, which may sit above `repo`.
+  const [top, shown] = await Promise.all([
+    run($, ['git', 'rev-parse', '--show-toplevel'], 5000, repo),
+    run($, ['git', 'show', '--name-only', '--format=', 'HEAD'], 5000, repo),
+  ])
+  const root = (top && top.exitCode === 0 && top.stdout.trim()) || repo
   const files = (shown?.stdout ?? '').split('\n').filter(Boolean)
-  const inCommit = new Set(files)
+  const inCommit = new Set(files.map(file => join(root, file)))
+  const isIn = (path: string) => inCommit.has(path.startsWith('/') ? path : join(cwd, path))
 
   await update($, status, () => ({ verb: 'committed', hash }) as const)
-  await update($, touched, list => list.map(one => (inCommit.has(one.path) ? { ...one, isActive: false, isCommitted: true } : one)))
-  await update($, now, () => ({ verb: 'committed', hash, files }) as const)
-  fileIndex = null
+  await update($, touched, list => list.map(one => (isIn(one.path) ? { ...one, isActive: false, isCommitted: true } : one)))
+  await setNow($, () => ({ verb: 'committed', hash, files }))
+  forget()
   await refreshGit($)
 }
