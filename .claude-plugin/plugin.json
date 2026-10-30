@@ -1,0 +1,11 @@
+{
+  "name": "files-pane",
+  "version": "0.5.0",
+  "description": "A Files pane for Claude Code: what Claude is reading or editing right now, the files it touched this turn, git status, search and a VS Code-style project tree.",
+  "author": { "name": "Marius Adam" },
+  "homepage": "https://github.com/Marius-Adam/claude-files-pane",
+  "repository": "https://github.com/Marius-Adam/claude-files-pane",
+  "license": "MIT",
+  "keywords": ["files", "explorer", "pane", "git", "vscode-icons"],
+  "types": "./types/index.d.ts"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "marius-adam",
+  "owner": { "name": "Marius Adam" },
+  "metadata": { "description": "Claude Code mods by Marius Adam" },
+  "plugins": [
+    {
+      "name": "files-pane",
+      "description": "A Files pane for Claude Code: what Claude is reading or editing right now, the files it touched this turn, git status, search and a VS Code-style project tree.",
+      "source": "./"
+    }
+  ]
+}
