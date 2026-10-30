@@ -284,5 +284,7 @@ test('the card shows the tail of what Claude is thinking as it streams', async (
 
   expect(await text(ui, /^Claude is thinking$/)).toBe('Claude is thinking')
   expect(await text(ui, /back off/)).toMatch(/back off/)
+  // The last piece came within the spacing of the first: it is shown when the step ends.
+  expect(await text(ui, /client\.ts first/)).toMatch(/client\.ts first/)
   await ui.unmount()
 })

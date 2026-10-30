@@ -542,20 +542,33 @@ export const register: Register = on => {
     let thought = ''
     let answer = ''
     let shownAt = 0
-    const show = (value: Now) => {
-      const at = Date.now()
-
-      if (at - shownAt < 300) return
-      shownAt = at
+    // The newest words held back by the spacing, shown when the step ends so the last of them is
+    // what the card keeps.
+    let held: Now | null = null
+    const put = (value: Now) =>
       void update($, now, () => value)
         .then(() => redraw($))
         .catch(() => {})
+    const show = (value: Now) => {
+      const at = Date.now()
+
+      if (at - shownAt < 300) {
+        held = value
+        return
+      }
+      shownAt = at
+      held = null
+      put(value)
     }
 
     for (;;) {
       const step = await stream.next()
 
-      if (step.done) return step.value
+      if (step.done) {
+        if (held) put(held)
+
+        return step.value
+      }
 
       const chunk = step.value
 
