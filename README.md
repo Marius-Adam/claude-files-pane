@@ -82,12 +82,19 @@ Claude Code writes its API types into `.claude-plugin/types/` the first time it 
 | `hooks/icons.ts` | Which icon a file or folder gets: exact name, config prefix, then longest extension |
 | `hooks/icon-svgs.ts` | The vscode-icons SVGs those tables use (generated) |
 | `scripts/gen_icons.py` | Regenerates `icon-svgs.ts` after you add an icon to `icons.ts` |
+| `scripts/demo/` | Redraws `docs/demo.gif` from the pane's own output |
 | `tests/` | Tests, run against the terminal and desktop surfaces |
 
 To add an icon, map a name, extension or folder in `hooks/icons.ts` to an id from [vscode-icons](https://icon-sets.iconify.design/vscode-icons/), then:
 
 ```bash
 npm pack @iconify-json/vscode-icons && tar xzf iconify-json-vscode-icons-*.tgz && python3 scripts/gen_icons.py package/icons.json hooks/icons.ts hooks/icon-svgs.ts
+```
+
+After a change to how the pane looks, redraw the demo GIF. It runs a scripted session against the pane and needs Node 22+, Google Chrome and Python 3 with Pillow:
+
+```bash
+scripts/demo/make.sh
 ```
 
 </details>
