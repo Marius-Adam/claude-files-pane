@@ -3,6 +3,7 @@ import type { TestBody } from 'claude-code/testing'
 
 import { SVGS } from '../hooks/icon-svgs'
 import { fileIcon, folderIcon } from '../hooks/icons'
+import { rank } from '../hooks/paths'
 
 const PANE = {
   plugin: 'files-pane',
@@ -22,9 +23,10 @@ const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 
 const entry = (name: string, kind: 'file' | 'dir', size = 0) => ({ name, kind, size, mtimeMs: 0, isLink: false })
 
-// What git answers in the engine below. `dirty` is what it reports as changed, so a test can commit
-// by emptying it; a commit moves HEAD to a1c9e42 unless `isRefused`, as a failing hook would.
-type GitWorld = { dirty: string[]; ahead: string; head?: string; shown?: string; isRefused?: boolean }
+// What git answers in the engine below. `dirty` is what it reports as changed (`git status -z`
+// fields), so a test can commit by emptying it; a commit moves HEAD to a1c9e42 unless `isRefused`,
+// as a failing hook would. `diff` is what `git diff` prints for a file.
+type GitWorld = { dirty: string[]; ahead: string; head?: string; shown?: string; isRefused?: boolean; diff?: string }
 
 // Each hook stands for the engine: a project at /proj with src/ and tests/, on branch main.
 // `ran` collects every command git is asked, with the folder it runs in.
@@ -62,7 +64,9 @@ const engine = (
       : argv.includes('--short') && argv.includes('rev-parse')
         ? `${git.head ?? '9f3b210'}\n`
         : argv.includes('status')
-          ? git.dirty.map(line => `${line}\n`).join('')
+          ? git.dirty.map(line => `${line}\0`).join('')
+          : argv[1] === 'diff' && !argv.includes('--numstat')
+            ? (git.diff ?? 'diff --git a/src/client.js b/src/client.js\n--- a/src/client.js\n+++ b/src/client.js\n@@ -1 +1 @@\n-a\n+b\n')
           : argv.includes('--numstat')
             ? git.dirty.length > 0 ? '1\t1\tsrc/client.js\n' : ''
             : argv.includes('rev-list')
@@ -73,6 +77,11 @@ const engine = (
 
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
+}
+
+// Lets what the pane started without waiting (a read of git) run to its end.
+const settled = async () => {
+  for (let i = 0; i < 50; i++) await Promise.resolve()
 }
 
 const text = async (ui: { find: (q: { type: string; text: RegExp }) => Promise<{ text?: string } | undefined> }, pattern: RegExp) =>
@@ -428,5 +437,157 @@ test('a press anywhere on a folder row opens it and closes it', async ($, on) =>
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
   await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('git names a renamed file once, from the new name it reports first', async ($, on) => {
+  engine(on, { dirty: ['R  src/client.js', 'src/old-client.js', '?? notes/a file with spaces.md'], ahead: '0' })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  expect(await text(ui, /^ ?2 changed ?$/)).toMatch(/2 changed/)
+  await ui.unmount()
+})
+
+test('a command makes the pane read git again; a web search does not', async ($, on) => {
+  const ran: { argv: string[]; cwd?: string }[] = []
+  engine(on, undefined, [], ran)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  // The read the pane makes as it starts, out of the way.
+  await settled()
+
+  const reads = () => ran.filter(one => one.argv.includes('status')).length
+  const before = reads()
+
+  await $.tool.call({ tool: 'WebSearch', query: 'retry backoff', mode: 'standard' })
+  await settled()
+  expect(reads()).toBe(before)
+
+  await $.tool.call({ tool: 'Bash', command: 'touch notes.md', description: 'Make a note' })
+  await settled()
+  expect(reads()).toBeGreaterThan(before)
+})
+
+test('two commands at once: the card shows the one still running when the other ends', async ($, on) => {
+  const holds: Record<string, () => void> = {}
+  on('command.register', () => ({ value: { command: 'files' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.cwd', () => ({ value: '/proj' }))
+  on('fs.list', () => ({ value: [] }))
+  on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('tool.call', async (_, e) => {
+    await new Promise<void>(resolve => (holds[(e as { description: string }).description] = resolve))
+
+    return { result: {} }
+  })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const first = $.tool.call({ tool: 'Bash', command: 'npm run lint', description: 'Lint' })
+  const second = $.tool.call({ tool: 'Bash', command: 'npm test', description: 'Test' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  holds.Lint!()
+  await first
+  expect(await text(ui, /^Test$/)).toBe('Test')
+
+  holds.Test!()
+  await second
+  expect(await text(ui, /^Claude is thinking$/)).toBe('Claude is thinking')
+  await ui.unmount()
+})
+
+test('the ⋯ on a file opens its actions; Diff shows what changed, and hides it again', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const code = async () => (await ui.find({ type: 'Code' })) as unknown as { props?: { source?: string; format?: string } } | undefined
+
+  expect(await text(ui, /^@ Mention$/)).toBeUndefined()
+
+  await ui.press({ key: 'more:touched:/proj/src/client.js' })
+  expect(await text(ui, /^@ Mention$/)).toBe('@ Mention')
+  expect(await code()).toBeUndefined()
+
+  await ui.press({ key: 'diff:touched:/proj/src/client.js' })
+  const shown = await code()
+  expect(shown?.props?.format).toBe('diff')
+  // The hunk only: git's header lines are left to the file's row.
+  expect(shown?.props?.source).toBe('@@ -1 +1 @@\n-a\n+b')
+
+  await ui.press({ key: 'diff:touched:/proj/src/client.js' })
+  expect(await code()).toBeUndefined()
+
+  // The ⋯ again closes the actions.
+  await ui.press({ key: 'more:touched:/proj/src/client.js' })
+  expect(await text(ui, /^@ Mention$/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the actions on a file put it in the prompt, copy its path, and find it in the tree', async ($, on) => {
+  const filled: string[] = []
+  const copied: string[] = []
+  engine(on)
+  on('prompt.fill', (_, e) => {
+    filled.push((e as { text: string }).text)
+
+    return { isFilled: true }
+  })
+  on('ui.copy', (_, e) => {
+    copied.push((e as { text: string }).text)
+
+    return { value: { isCopied: true } }
+  })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Read', file_path: '/proj/src/client.js' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  // A left press on a file's row does nothing: there is no Button on it but its ⋯.
+  await ui.press({ key: 'more:tree:/proj/README.md' })
+  await ui.press({ key: 'mention:tree:/proj/README.md' })
+  expect(filled).toEqual(['@README.md '])
+  // A done action closes the actions.
+  expect(await text(ui, /^@ Mention$/)).toBeUndefined()
+
+  await ui.press({ key: 'more:tree:/proj/README.md' })
+  await ui.press({ key: 'copy:tree:/proj/README.md' })
+  expect(copied).toEqual(['README.md'])
+
+  // src is closed: Show in tree opens it down to the file.
+  const names = async () => ((await ui.findAll({ type: 'Text', text: /^client\.js$/ })) as unknown as unknown[]).length
+  expect(await names()).toBe(1)
+  await ui.press({ key: 'more:touched:/proj/src/client.js' })
+  await ui.press({ key: 'show:touched:/proj/src/client.js' })
+  expect(await names()).toBe(2)
+  await ui.unmount()
+})
+
+test('search ranks a file by its name: the letters in order, together, at a word start', () => {
+  const paths = ['docs/clients/list.md', 'scripts/cli.ts', 'tests/client.test.js', 'src/client.js', 'src/connect.js']
+
+  expect(rank(paths, 'client', 3)).toEqual(['src/client.js', 'tests/client.test.js', 'docs/clients/list.md'])
+  expect(rank(paths, 'clnt', 5)).toContain('src/client.js')
+  expect(rank(paths, 'zzz', 5)).toEqual([])
+})
+
+test('the touched list keeps the earlier turns, a press away', async ($, on) => {
+  engine(on)
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.turn.start({ turnId: 't1', prompt: 'look' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/proj/README.md' })
+  await $.turn.start({ turnId: 't2', prompt: 'again' } as never)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  expect(await text(ui, /^Nothing yet$/)).toBe('Nothing yet')
+
+  await ui.press({ key: 'scope' })
+  expect(await text(ui, /^Nothing yet$/)).toBeUndefined()
+  expect(await text(ui, /Opened/)).toMatch(/Opened/)
   await ui.unmount()
 })

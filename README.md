@@ -30,9 +30,10 @@ Restart Claude Code and the pane opens beside the chat. Closed it? `/files` brin
 
 - **What Claude is doing, right now.** Its thinking as it streams, the command it runs, the file it reads or edits, then what the turn changed.
 - **A tree that follows Claude.** Folders open to each file Claude edits and its row shimmers, even in another project. **⌂ Project** takes you home.
-- **Every file it touched**, with `Reading`, `Edited` and `Committed` pills and the lines added and removed.
+- **Every file it touched**, with `Reading`, `Edited` and `Committed` pills and the lines added and removed. **Whole session** keeps the earlier turns' files too.
+- **A file's actions behind its ⋯**: put it in your prompt as `@path`, copy its path, see its **Diff** right under the row, or find it in the tree.
 - **Git at a glance.** Branch, commits ahead, changed files and line counts; ignored files are dimmed.
-- **VS Code's icons, search, dates and sizes.**
+- **VS Code's icons, dates and sizes, and its kind of search**: type a few letters of a name, best matches first.
 
 | Colour | Means |
 | :-- | :-- |
@@ -45,7 +46,7 @@ Works in the Claude desktop app and VS Code. In the terminal it draws the same p
 
 ## Privacy
 
-The pane only looks. It reads folder listings and runs read-only git commands (`status`, `diff --numstat`, `rev-parse`, `ls-files`, `rev-list`, `show`) in your project. It never changes a tool call, writes no files and sends nothing anywhere.
+The pane only looks. It reads folder listings and runs read-only git commands (`status`, `diff`, `rev-parse`, `ls-files`, `rev-list`, `show`) in your project. It never changes a tool call, writes no files and sends nothing anywhere. The one thing it writes is to your prompt box, when you choose **@ Mention** on a file.
 
 ## Update or remove
 
@@ -74,11 +75,17 @@ Check and test it:
 claude plugin validate . && claude plugin test .
 ```
 
-Claude Code writes its API types into `.claude-plugin/types/` the first time it loads the mod; after that, `npx -p typescript tsc -p . --noEmit` type-checks it.
+Claude Code writes its API types into `.claude-plugin/types/` the first time it loads the mod; after that, `npx -p typescript tsc -p . --noEmit` type-checks it. GitHub runs the validation and the tests on every push and pull request (`.github/workflows/check.yml`).
 
 | Path | What's there |
 | :-- | :-- |
-| `hooks/register.tsx` | The mod: its hooks, its state and the pane's drawing |
+| `hooks/register.tsx` | The mod's hooks: what Claude does reaches the pane through these |
+| `hooks/pane.tsx` | The pane's drawing: the card, git's line, search, the toolbar, the touched list and the tree |
+| `hooks/activity.ts` | What Claude is doing and touched: the card's timing, following Claude, commits, diffs |
+| `hooks/disk.ts` | What the pane reads of the disk: git, folder listings, the search index, a file's diff |
+| `hooks/paths.ts` | Paths, dates and sizes as the pane prints them, and how search ranks a file |
+| `hooks/look.ts` | Colours, type chips and the SVG the pane draws |
+| `hooks/state.ts` | The pane's constants, and the tags of the values it keeps |
 | `hooks/icons.ts` | Which icon a file or folder gets: exact name, config prefix, then longest extension |
 | `hooks/icon-svgs.ts` | The vscode-icons SVGs those tables use (generated) |
 | `scripts/gen_icons.py` | Regenerates `icon-svgs.ts` after you add an icon to `icons.ts` |

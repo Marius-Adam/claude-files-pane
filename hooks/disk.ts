@@ -1,0 +1,231 @@
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface } from 'claude-code'
+
+import type { Git } from '../types'
+import { dirOf, join, listPath } from './paths'
+import { DEFAULT_VIEW } from './state'
+
+// The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
+// uses it, so every file names its own; state.ts lists the tags they must all share.
+const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-3' })
+const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-3' })
+
+// What the pane reads of the disk: git's view of the project shown, folder listings and the file
+// index search walks. All of it read-only: listings, and git commands that change nothing.
+
+export const SKIP = new Set(['.git'])
+
+// A pane draws again only when asked: every write ends with this.
+export function redraw($: EngineInterface) {
+  return $.ui.invalidate('ui.render')
+}
+
+export function run($: EngineInterface, argv: string[], timeoutMs = 10000, cwd?: string) {
+  return $.process.run(argv, { timeoutMs, ...(cwd ? { cwd } : {}) }).catch(() => null)
+}
+
+// Git's NUL-separated output (`-z`), whose paths come raw, never quoted or escaped. A newline
+// separates too, so the output of a git that ignored `-z` still reads.
+const fieldsOf = (stdout: string | undefined) => (stdout ?? '').split(/\0|\n/)
+
+// The commit HEAD names in `cwd`, short; null where there is none.
+export async function headOf($: EngineInterface, cwd: string) {
+  const head = await run($, ['git', 'rev-parse', '--short', 'HEAD'], 5000, cwd)
+
+  return head && head.exitCode === 0 ? head.stdout.trim() || null : null
+}
+
+type Entry = Awaited<ReturnType<EngineInterface['fs']['list']>>[number]
+
+// Folder listings, kept between redraws: the pane draws several times a second while Claude
+// streams, and the folders have not changed. Keyed by absolute path; a failed listing is not kept.
+const listings = new Map<string, Promise<Entry[]>>()
+
+export function listDir($: EngineInterface, path: string) {
+  let listing = listings.get(path)
+
+  if (!listing) {
+    listing = $.fs.list(path).catch(() => {
+      listings.delete(path)
+
+      return []
+    })
+    listings.set(path, listing)
+  }
+
+  return listing
+}
+
+// Git as the project shown sees it: `root`, or the session's folder when empty. Paths come
+// relative to that folder, as the tree spells them.
+async function readGit($: EngineInterface, root: string): Promise<Git | null> {
+  const at = root || undefined
+  // The branch, and where the folder sits in its repository (`sub/`, or nothing at the top).
+  const head = await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD', '--show-prefix'], 5000, at)
+
+  if (!head || head.exitCode !== 0) return null
+
+  const [branch = '', prefix = ''] = head.stdout.split('\n')
+  const [state, numstat, ahead, ignored] = await Promise.all([
+    run($, ['git', 'status', '--porcelain', '-z', '-uall'], 10000, at),
+    run($, ['git', 'diff', '--numstat', '-z', '--relative', 'HEAD'], 10000, at),
+    run($, ['git', 'rev-list', '--count', '@{u}..HEAD'], 5000, at),
+    // `--directory` names an ignored folder once, as `node_modules/`, not every file in it.
+    run($, ['git', 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'], 10000, at),
+  ])
+
+  // `XY path` from the repository's top; a rename or a copy names where it came from next.
+  const changed: string[] = []
+  const states = fieldsOf(state?.stdout)
+
+  for (let i = 0; i < states.length; i++) {
+    const field = states[i]!
+
+    if (field.length < 4) continue
+    if (/^[RC]/.test(field)) i++
+
+    const path = field.slice(3)
+
+    if (path.startsWith(prefix)) changed.push(path.slice(prefix.length))
+  }
+
+  // `added removed path`, or for a rename `added removed` and then its old and new paths.
+  const lines: Record<string, [number, number]> = {}
+  const counts = fieldsOf(numstat?.stdout)
+
+  for (let i = 0; i < counts.length; i++) {
+    const [added, removed, named] = counts[i]!.split('\t')
+
+    if (named === undefined) continue
+
+    const path = named === '' ? counts[(i += 2)] : named
+
+    // A binary file counts as `-`: it has no lines to show.
+    if (path && /^\d+$/.test(added ?? '') && /^\d+$/.test(removed ?? '')) lines[path] = [Number(added), Number(removed)]
+  }
+
+  return {
+    branch: branch.trim(),
+    ahead: ahead && ahead.exitCode === 0 ? Number(ahead.stdout.trim()) || 0 : null,
+    changed,
+    lines,
+    ignored: fieldsOf(ignored?.stdout).filter(Boolean).slice(0, 2000),
+  }
+}
+
+// Reads git again for the project shown. A call while a read runs is folded into one more read
+// after it, so a burst of tool calls costs two reads, not one each.
+let reading: Promise<void> | null = null
+let isStale = false
+
+export function refreshGit($: EngineInterface): Promise<void> {
+  if (reading) {
+    isStale = true
+
+    return reading
+  }
+
+  // Never rejects: callers start it without waiting, and a session that has ended answers nothing.
+  reading = (async () => {
+    do {
+      isStale = false
+      const next = await readGit($, (await read($, view)).root)
+      await update($, git, () => next)
+      redraw($)
+    } while (isStale)
+  })()
+    .catch(() => {})
+    .finally(() => {
+      reading = null
+    })
+
+  return reading
+}
+
+// Every file in the project shown, for search: git's list, else a bounded walk.
+let fileIndex: string[] | null = null
+let fileIndexRoot = ''
+
+// `home` is the project shown, absolute.
+export async function indexFiles($: EngineInterface, home: string): Promise<string[]> {
+  if (fileIndex && fileIndexRoot === home) return fileIndex
+
+  fileIndexRoot = home
+  const listed = await run($, ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], 10000, home)
+
+  if (listed && listed.exitCode === 0) {
+    fileIndex = fieldsOf(listed.stdout).filter(Boolean)
+
+    return fileIndex
+  }
+
+  const found: string[] = []
+  const queue = ['']
+
+  while (queue.length > 0 && found.length < 5000) {
+    const dir = queue.shift()!
+    const entries = await $.fs.list(listPath(home, dir)).catch(() => [])
+
+    for (const entry of entries) {
+      if (SKIP.has(entry.name) || entry.name === 'node_modules') continue
+      if (entry.kind === 'dir') queue.push(join(dir, entry.name))
+      else found.push(join(dir, entry.name))
+    }
+  }
+
+  fileIndex = found
+
+  return found
+}
+
+// What the pane holds of the disk, dropped whenever it may have changed: search's index and the
+// tree's listings.
+export const forget = () => {
+  fileIndex = null
+  listings.clear()
+}
+
+// A diff the pane shows whole up to this many lines; past it, cut where a hunk ends.
+const DIFF_LINES = 400
+
+// Lines Code draws: no control character but tab and newline.
+const printable = (line: string) => line.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
+
+// A hunk's header counted again for the lines kept of it, so a hunk cut short still parses.
+const recount = (hunk: string[]) => {
+  const [, from = '0', to = '0', rest = ''] = hunk[0]!.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/) ?? []
+  const body = hunk.slice(1)
+  const old = body.filter(line => !line.startsWith('+')).length
+  const next = body.filter(line => !line.startsWith('-')).length
+
+  return [`@@ -${from},${old} +${to},${next} @@${rest}`, ...body]
+}
+
+// What changed in a file since HEAD, as unified-diff hunks for the pane's Code view; a file git
+// does not track yet, whole, as added lines. Past DIFF_LINES the rest is left out, and counted.
+export async function diffOf($: EngineInterface, abs: string): Promise<{ text: string; more: number }> {
+  const dir = dirOf(abs)
+  const tracked = await run($, ['git', 'ls-files', '--error-unmatch', '--', abs], 5000, dir)
+  const argv =
+    tracked && tracked.exitCode === 0
+      ? ['git', 'diff', '--no-color', '--no-ext-diff', 'HEAD', '--', abs]
+      : ['git', 'diff', '--no-color', '--no-ext-diff', '--no-index', '--', '/dev/null', abs]
+  // `--no-index` exits 1 when the files differ, which they always do: its output is what counts.
+  const out = (await run($, argv, 10000, dir))?.stdout ?? ''
+  const all = out.split('\n').map(printable)
+  const start = all.findIndex(line => line.startsWith('@@'))
+
+  if (start < 0) return { text: '', more: 0 }
+
+  const lines = all.slice(start)
+
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+  if (lines.length <= DIFF_LINES) return { text: lines.join('\n'), more: 0 }
+
+  // Cut where the last hunk that starts in room begins; a first hunk too long for the room is
+  // cut inside, its header counted again.
+  const lastStart = lines.slice(0, DIFF_LINES + 1).findLastIndex(line => line.startsWith('@@'))
+  const kept = lastStart > 0 ? lines.slice(0, lastStart) : recount(lines.slice(0, DIFF_LINES))
+
+  return { text: kept.join('\n'), more: lines.length - kept.length }
+}
