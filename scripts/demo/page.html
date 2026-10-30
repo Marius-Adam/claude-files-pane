@@ -40,6 +40,15 @@
   .Button { display: inline-flex; align-items: center; background: none; border: 0; padding: 0; margin: 0; color: inherit; font: inherit; white-space: nowrap; overflow: hidden; min-width: 0; }
   .Input { height: 32px; flex: 1; display: flex; align-items: center; gap: 8px; border: 1px solid #80808033; border-radius: 9px; padding: 0 11px; color: var(--dim); background: #ffffff05; }
   .Svg { flex: none; display: block; }
+  .Code { font: 11.5px/17px var(--mono); border: 1px solid #80808026; border-radius: 8px; background: #141413; padding: 6px 0; overflow: hidden; }
+  .Code div { padding: 0 10px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  .Code .add { background: #72cc821c; color: #9bdca6; }
+  .Code .del { background: #e86f6f1c; color: #eda0a0; }
+  .Code .hunk { color: var(--dim); }
+  .body { position: relative; }
+  /* The person's press: the element lit, and a pointer on it. */
+  .pressed { background: #6cb0f02e !important; border-radius: 7px; box-shadow: 0 0 0 1px #6cb0f066; }
+  .pointer { position: absolute; width: 18px; height: 22px; pointer-events: none; z-index: 5; filter: drop-shadow(0 1px 2px #0009); }
 </style>
 </head>
 <body>
@@ -114,6 +123,7 @@ const build = node => {
       if (p.overflow === 'hidden') s.overflow = 'hidden'
       if (p.backgroundColor) s.background = color(p.backgroundColor)
       const key = p.key ?? ''
+      if (key) el.dataset.key = key
       if (p.borderStyle) {
         s.border = `1px solid ${color(p.borderColor ?? '#8080802e')}`
         s.borderRadius = key.startsWith('row:') ? '7px' : column ? '13px' : '999px'
@@ -151,9 +161,21 @@ const build = node => {
       if (p.backgroundColor) s.background = color(p.backgroundColor)
       break
     }
+    case 'Code': {
+      el = document.createElement('div')
+      el.className = 'Code'
+      for (const line of (p.source ?? '').split('\n')) {
+        const row = document.createElement('div')
+        row.className = line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : ''
+        row.textContent = line || ' '
+        el.append(row)
+      }
+      return el
+    }
     case 'Button': {
       el = document.createElement('span')
       el.className = 'Button'
+      if (p.key) el.dataset.key = p.key
       if (p.dimColor) el.style.color = 'var(--dim)'
       if (!kids.length && p.label) el.textContent = p.label
       break
@@ -205,16 +227,34 @@ window.show = (frame, tree) => {
   // live pill, brought into sight a little at a time.
   const body = document.getElementById('body')
   const rows = [...root.querySelectorAll('.Box')].filter(el => el.style.borderRadius === '7px')
-  const target = rows.find(row => /editing|reading/.test(row.textContent))
+  // A press the person makes: lit, a pointer on it, and the pane brought to it like a live row.
+  // A press on a row lands on the button laid over it: the row is what lights.
+  const pressed = frame.press ? root.querySelector(`[data-key="${CSS.escape(frame.press)}"]`) : null
+  const lit = pressed && (pressed.closest('[data-key^="row:"]') ?? pressed)
+  if (lit) lit.classList.add('pressed')
+  const target = lit ?? rows.find(row => /editing|reading/.test(row.textContent))
   let want = scrollTop
   if (target) {
-    const top = target.offsetTop, bottom = top + target.offsetHeight
+    // Measured against the whole tree: a row's offsetTop counts from the folder box it sits in.
+    const top = target.getBoundingClientRect().top - root.getBoundingClientRect().top, bottom = top + target.offsetHeight
     const view = body.clientHeight - 24
     if (bottom > scrollTop + view) want = bottom - view
     if (top < scrollTop) want = top - 8
   }
   scrollTop += Math.max(-40, Math.min(40, want - scrollTop))
   body.scrollTop = scrollTop
+
+  body.querySelector('.pointer')?.remove()
+  if (lit) {
+    const box = (pressed.closest('[data-key^="row:"]') ? pressed.closest('[data-key^="row:"]').querySelector('.Text') ?? pressed : pressed).getBoundingClientRect()
+    const at = body.getBoundingClientRect()
+    const pointer = document.createElement('div')
+    pointer.className = 'pointer'
+    pointer.innerHTML = '<svg width="18" height="22" viewBox="0 0 18 22"><path d="M2 1.5v16.5l4.3-4.1 2.9 6.6 2.9-1.3-2.9-6.5h6.1z" fill="#fff" stroke="#111" stroke-width="1.3" stroke-linejoin="round"/></svg>'
+    pointer.style.left = `${box.left - at.left + Math.min(box.width / 2, 40)}px`
+    pointer.style.top = `${box.top - at.top + body.scrollTop + box.height / 2 - 2}px`
+    body.append(pointer)
+  }
   return true
 }
 </script>

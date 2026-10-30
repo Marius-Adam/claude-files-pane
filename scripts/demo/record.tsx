@@ -36,6 +36,25 @@ const TREE: Record<string, ReturnType<typeof entry>[]> = {
 // What git answers: the files changed and their line counts, HEAD, how far ahead, the last commit's files.
 const git = { dirty: [] as string[], lines: {} as Record<string, [number, number]>, head: '7d2e0b1', ahead: 0, committed: [] as string[] }
 
+// What `git diff` shows of the edited client: the retry the person reviews in the pane.
+const DIFF = `diff --git a/src/api/client.ts b/src/api/client.ts
+--- a/src/api/client.ts
++++ b/src/api/client.ts
+@@ -12,9 +12,19 @@ export async function fetchForecast(city: string) {
+-  const res = await fetch(forecastUrl(city))
+-  if (!res.ok) throw new ForecastError(res.status)
+-  return res.json()
++  for (let attempt = 0; ; attempt++) {
++    const res = await fetch(forecastUrl(city))
++    if (res.ok) return res.json()
++    if (attempt === RETRIES || res.status < 500) {
++      throw new ForecastError(res.status)
++    }
++    await sleep(BASE_MS * 2 ** attempt)
++  }
+ }
+`
+
 // A line of the chat: the person's ask, a tool call (live while it runs), or Claude's answer.
 type Chat = { kind: 'user' | 'tool' | 'text'; verb?: string; detail?: string; text?: string; isLive?: boolean }
 
@@ -63,7 +82,7 @@ test('record', { timeoutMs: 900_000 }, async ($, on) => {
     if (call.tool === 'Edit' && call.file_path) {
       const path = call.file_path.slice(HOME.length + 1)
       git.dirty.push(` M ${path}`)
-      git.lines[path] = path.includes('test') ? [38, 0] : [24, 6]
+      git.lines[path] = path.includes('test') ? [38, 0] : path.includes('Header') ? [3, 1] : [24, 6]
     }
 
     if (call.command?.startsWith('git commit')) {
@@ -80,10 +99,12 @@ test('record', { timeoutMs: 900_000 }, async ($, on) => {
     const { argv } = e as { argv: string[] }
     const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
+    if (argv.includes('--absolute-git-dir')) return out(`${HOME}/.git\n`)
     if (argv.includes('--show-toplevel')) return out(`${HOME}\n`)
     if (argv.includes('--abbrev-ref')) return out('main\n')
     if (argv.includes('--short') && argv.includes('rev-parse')) return out(`${git.head}\n`)
     if (argv.includes('status')) return out(git.dirty.map(line => `${line}\n`).join(''))
+    if (argv.includes('diff') && !argv.includes('--numstat')) return out(DIFF)
     if (argv.includes('--numstat')) return out(Object.entries(git.lines).map(([path, [a, d]]) => `${a}\t${d}\t${path}\n`).join(''))
     if (argv.includes('rev-list')) return out(`${git.ahead}\n`)
     if (argv.includes('--ignored')) return out('node_modules/\n')
@@ -92,6 +113,7 @@ test('record', { timeoutMs: 900_000 }, async ($, on) => {
 
     return out('')
   })
+  on('turn.complete', () => ({ text: '' }))
   on('turn.step', async function* () {
     for (const piece of pieces) yield { ...piece, index: 0 } as never
 
@@ -110,11 +132,12 @@ test('record', { timeoutMs: 900_000 }, async ($, on) => {
   // Each tree is printed once, at the end; a frame names its tree by index.
   const chat: Chat[] = []
   const trees: string[] = []
+  let pressing: string | null = null
   const shot = async () => {
     const tree = JSON.stringify(await ui.drawn())
     let at = trees.indexOf(tree)
     if (at < 0) at = trees.push(tree) - 1
-    console.log(`FRAME ${JSON.stringify({ time, tree: at, chat })}`)
+    console.log(`FRAME ${JSON.stringify({ time, tree: at, chat, press: pressing })}`)
   }
   const hold = async (ms: number) => {
     for (let elapsed = 0; elapsed < ms; elapsed += FRAME) {
@@ -148,6 +171,14 @@ test('record', { timeoutMs: 900_000 }, async ($, on) => {
       await hold(PIECE)
     }
   }
+  // The pointer rests on the element a moment, the press lands, and the pointer lingers.
+  const press = async (key: string, before = 700, after = 500) => {
+    pressing = key
+    await hold(before)
+    await ui.press({ key } as never)
+    await hold(after)
+    pressing = null
+  }
   const tool = async (call: Record<string, unknown>, row: Chat, ms: number) => {
     chat.push({ ...row, kind: 'tool', isLive: true })
     toolMs = ms
@@ -176,10 +207,35 @@ test('record', { timeoutMs: 900_000 }, async ($, on) => {
 
   chat.push({ kind: 'text', text: '' })
   await stream('text', 'Failed forecast requests now retry up to 3 times with exponential backoff (250 ms, 500 ms, 1 s). Added 4 tests in tests/client.test.ts; all pass.')
-  await hold(500)
+  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 1000, isAborted: false } as never).catch(() => {})
+  await hold(900)
+
+  // The person reviews the change in the pane: the file's ⋯, then its diff, then closed again.
+  const client = `${HOME}/src/api/client.ts`
+  await press(`more:touched:${client}`)
+  await press(`diff:touched:${client}`, 600, 3200)
+  await press(`diff:touched:${client}`, 500, 200)
+  await press(`more:touched:${client}`, 400, 600)
+
+  // A second turn: commit, then a small change elsewhere.
+  chat.push({ kind: 'user', text: 'Commit it, then show the retry count in the header.' })
+  await $.turn.start({ turnId: 't2', prompt: '' } as never).catch(() => {})
+  await hold(400)
   await tool({ tool: 'Bash', command: 'git commit -am "Retry forecast requests with backoff"', description: 'Commit the change' }, { verb: 'Bash', detail: 'git commit -m "Retry forecast requests with backoff"' }, 1200)
-  await $.turn.complete({ turnId: 't1' } as never).catch(() => {})
-  await hold(3500)
+  await hold(900)
+  await tool({ tool: 'Read', file_path: `${HOME}/src/components/Header.tsx` }, { verb: 'Read', detail: 'src/components/Header.tsx' }, 1100)
+  await tool({ tool: 'Edit', file_path: `${HOME}/src/components/Header.tsx`, old_string: 'a', new_string: 'b' }, { verb: 'Update', detail: 'src/components/Header.tsx' }, 1600)
+  await hold(400)
+  chat.push({ kind: 'text', text: '' })
+  await stream('text', 'Committed a1c9e42. The header now shows the retry count while a forecast request is retrying.', 4)
+  await $.turn.complete({ turnId: 't2', answer: '', durationMs: 1000, isAborted: false } as never).catch(() => {})
+  await hold(900)
+
+  // The whole session's files, the first turn's committed ones too; then a closed folder, opened
+  // by a press anywhere on its row.
+  await press('scope', 700, 2200)
+  await press('fold:.github', 700, 1800)
+  await hold(1200)
 
   trees.forEach((tree, at) => console.log(`TREE ${at} ${tree}`))
   await ui.unmount()
