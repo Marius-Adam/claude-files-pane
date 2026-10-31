@@ -17,12 +17,15 @@ import {
   upsert,
 } from './activity'
 import { forget, headOf, redraw, refreshGit } from './disk'
+import { hostOf } from './editors'
 import { renderPane } from './pane'
 import { base, join, rel, tailOf } from './paths'
 import { PANE } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
 // uses it, so every file names its own; state.ts lists the tags they must all share.
+const diff = atom({ plugin: 'files-pane', key: 'diff' } as const, null, { shape: 'diff-2' })
+const menu = atom({ plugin: 'files-pane', key: 'menu' } as const, null, { shape: 'menu-2' })
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
 const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-2' })
 
@@ -47,6 +50,8 @@ const setUp = async ($: EngineInterface) => {
   await $.command.register({ name: 'files', description: 'Show the Files pane: what Claude reads and edits, and the project tree' })
   void openPane($).catch(() => {})
   void refreshGit($)
+  // Ahead of the first ⋯, so its menu opens with the editors already found.
+  void hostOf($)
 }
 
 export const register: Register = on => {
@@ -182,6 +187,20 @@ export const register: Register = on => {
     void refreshGit($)
 
     return result
+  })
+
+  // A press anywhere else in the pane closes a file's actions, as a click away closes a native
+  // menu, and still does its own work. The menu's rows, and the ⋯ that opened it, end in its
+  // address, so they pass untouched.
+  on('ui.press', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const open = await read($, menu).catch(() => null)
+    if (open && !e.element.endsWith(`:${open.where}:${open.path}`)) {
+      await update($, menu, () => null)
+      await update($, diff, () => null)
+      redraw($)
+    }
+
+    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => renderPane($, e))

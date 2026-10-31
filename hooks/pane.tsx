@@ -5,6 +5,7 @@ import type { Menu, Touch, View } from '../types'
 import { absOf, cardSince, follow, reveal, toggleDiff } from './activity'
 import { rowsOf } from './diff'
 import { forget, indexFiles, listDir, redraw, refreshGit, SKIP } from './disk'
+import { hostOf, openIn, showInFinder } from './editors'
 import { fileIcon, folderIcon } from './icons'
 import {
   ADDED,
@@ -27,13 +28,14 @@ import {
   MUTED,
   READ,
   REMOVED,
+  RULE_SVG,
   shimmerSvg,
   TEXT_GLYPH,
   tint,
   TOOL,
   WRITE,
 } from './look'
-import { base, dirOf, join, listPath, parentOf, plural, rank, rel, sizeOf, where } from './paths'
+import { base, closedAbove, dirOf, isUnder, join, listPath, parentOf, plural, rank, rel, sizeOf, where } from './paths'
 import { DEFAULT_VIEW } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
@@ -41,7 +43,7 @@ import { DEFAULT_VIEW } from './state'
 const diff = atom({ plugin: 'files-pane', key: 'diff' } as const, null, { shape: 'diff-2' })
 const earlier = atom({ plugin: 'files-pane', key: 'earlier' } as const, [], { shape: 'touched-2' })
 const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-3' })
-const menu = atom({ plugin: 'files-pane', key: 'menu' } as const, null, { shape: 'menu-1' })
+const menu = atom({ plugin: 'files-pane', key: 'menu' } as const, null, { shape: 'menu-2' })
 const now = atom({ plugin: 'files-pane', key: 'now' } as const, null, { shape: 'now-3' })
 const scope = atom({ plugin: 'files-pane', key: 'scope' } as const, 'turn', { shape: 'scope-1' })
 const isTouchedAll = atom({ plugin: 'files-pane', key: 'isTouchedAll' } as const, false)
@@ -79,6 +81,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     ])
     await read($, tick)
     const cwd = await $.session.cwd()
+    // The editors a file's ⋯ offers, looked for once, as the session starts.
+    const host = acts ? await hostOf($) : null
     // The project the tree shows: the session's folder, or the one it followed Claude to.
     const home = v.root || cwd
     const project = base(home)
@@ -117,8 +121,13 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       redraw($)
     }
     const toggleActions = async (where: Menu['where'], abs: string) => {
-      await update($, menu, old => (old?.path === abs && old.where === where ? null : { path: abs, where }))
+      await update($, menu, old => (old?.path === abs && old.where === where ? null : { path: abs, where, sub: null }))
       await update($, diff, () => null)
+      redraw($)
+    }
+    // One submenu open at a time, as in a native menu: opening one folds the other.
+    const toggleSub = async (sub: Menu['sub']) => {
+      await update($, menu, old => old && { ...old, sub: old.sub === sub ? null : sub })
       redraw($)
     }
 
@@ -131,6 +140,21 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       await update($, view, old => ({ ...old, query: '' }))
       await closeActions()
       if (path) void reveal($, path)
+    }
+
+    // Every file git reports changed, in sight in the tree: search cleared, the folders down to each
+    // opened, the first scrolled to. The tree goes to the project's top when one is outside the
+    // folder it shows. A deleted file has no row, so opens nothing.
+    const showChanged = async () => {
+      const paths = g?.changed ?? []
+
+      await update($, view, old => {
+        const start = paths.every(path => isUnder(old.dir, path)) ? { ...old, query: '' } : { ...old, query: '', dir: '' }
+
+        return { ...start, expanded: [...new Set([...start.expanded, ...paths.flatMap(path => closedAbove(start, path))])] }
+      })
+      redraw($)
+      if (paths[0]) void reveal($, paths[0])
     }
 
     // A surface that paints (not the terminal, where a border is box-drawing characters three rows
@@ -250,51 +274,144 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     }
 
     // A file's row and, while its ⋯ is pressed, its actions in a popover over the row above, at the
-    // ⋯'s end: put it in the prompt, copy its path, see its diff (a file git reports as changed) and,
-    // from another list, find it in the tree. Then the diff itself, under the row while it is open.
+    // ⋯'s end, laid out as the app's own menus are: put it in the prompt and copy its path; see its
+    // diff (a file git reports as changed) and, from another list, find it in the tree; open it in
+    // an editor installed on the host, or in Finder. Then the diff itself, under the row while open.
     // The popover hangs off a Box around the row, as the row clips what it holds; it floats over the
-    // rows before it, which an absolute Box is painted over, and moves none of them. Its actions
-    // stack one to a line, left-aligned, spaced and padded in steps each surface sizes its own way:
-    // a step wider apart where the surface paints, as the terminal draws that step as a blank line.
+    // rows before it, which an absolute Box is painted over, and moves none of them.
+    // While a menu is open, a press on any file's row closes it, as a click away does a native menu's,
+    // the ⋯ included: a layer over the row takes the press. (A press on any other control in the
+    // pane closes it too, in register.tsx.)
     const withActions = (row: JSX.Element, where: Menu['where'], abs: string, canDiff: boolean, indent = 0): JSX.Element[] => {
-      if (!isActing(where, abs)) return [row]
+      const away = acts ? pressAnywhere(`away:${where}:${abs}`, closeActions) : null
+      if (!isActing(where, abs))
+        return away
+          ? [
+              <Box key={`away:${where}:${abs}`} flexDirection="column" overflow="hidden">
+                {row}
+                {away}
+              </Box>,
+            ]
+          : [row]
 
       const name = rel(cwd, abs)
       const isDiff = canDiff && open?.path === abs
       const id = `${where}:${abs}`
-      const act = (key: string, label: string, onPress: (press: { surface: typeof e.surface }) => unknown, isOn = false) => (
-        <Button key={`${key}:${id}`} plain dimColor={!isOn} onPress={onPress}>
-          <Text size="footnote">{label}</Text>
-        </Button>
+      const sub = acts?.sub ?? null
+      // What runs on the host is offered only where the person sits at it: not from a phone.
+      const editors = e.surface === 'mobile' ? [] : (host?.editors ?? [])
+      const hasFinder = e.surface !== 'mobile' && host?.isMac === true
+      const mention = async () => {
+        await $.prompt.fill({ text: `@${name.includes(' ') ? `"${name}"` : name} `, mode: 'insert' }).catch(() => {})
+        await closeActions()
+      }
+      const copy = (text: string) => async (press: { surface: typeof e.surface }) => {
+        await $.ui.copy({ text, surface: press.surface }).catch(() => {})
+        $.ui.toast(`Copied ${text}`)
+        await closeActions()
+      }
+      // A launch that fails says so; one that works shows the app.
+      const launch = (label: string, run: () => Promise<boolean>) => async () => {
+        await closeActions()
+        if (!(await run())) $.ui.toast(`Could not open ${base(abs)} in ${label}`)
+      }
+
+      // The menu's rows in their groups, a divider between each two. A submenu's rows follow its own,
+      // one step in, while it is open. Laid out first, so the menu can be as wide as its longest row:
+      // the terminal draws a divider to that width.
+      type Item = {
+        key: string
+        label: string
+        onPress: (press: { surface: typeof e.surface }) => unknown
+        isSub?: boolean
+        isOpen?: boolean
+        depth?: number
+      }
+      const groups: Item[][] = [
+        [
+          { key: 'mention', label: '@ Mention', onPress: mention },
+          { key: 'copy', label: 'Copy', onPress: () => toggleSub('copy'), isSub: true, isOpen: sub === 'copy' },
+          ...(sub === 'copy'
+            ? [
+                { key: 'copy-abs', label: 'Absolute path', onPress: copy(abs), depth: 1 },
+                { key: 'copy-rel', label: 'Relative path', onPress: copy(name), depth: 1 },
+                { key: 'copy-name', label: 'Filename', onPress: copy(base(abs)), depth: 1 },
+              ]
+            : []),
+        ],
+        [
+          ...(canDiff ? [{ key: 'diff', label: isDiff ? 'Hide diff' : 'Diff', onPress: () => toggleDiff($, abs) }] : []),
+          ...(where !== 'tree' ? [{ key: 'show', label: 'Show in tree', onPress: () => showInTree(abs) }] : []),
+        ],
+        [
+          ...(editors.length > 0 ? [{ key: 'open', label: 'Open in', onPress: () => toggleSub('open'), isSub: true, isOpen: sub === 'open' }] : []),
+          ...(sub === 'open' && host
+            ? editors.map(editor => ({ key: `open-${editor.cli}`, label: editor.name, onPress: launch(editor.name, () => openIn($, host, editor, abs)), depth: 1 }))
+            : []),
+          ...(hasFinder ? [{ key: 'finder', label: 'Show in Finder', onPress: launch('Finder', () => showInFinder($, abs)) }] : []),
+        ],
+      ].filter(group => group.length > 0)
+      // In cells: the longest row, its indent and chevron, and each row's padding either side.
+      const inner = Math.max(...groups.flat().map(item => 2 * (item.depth ?? 0) + item.label.length + (item.isSub ? 3 : 0)))
+      const width = inner + 2 + (isRich ? 4 : 0)
+
+      // A row lights under the pointer, as a native menu's does, and a press anywhere on it counts;
+      // a submenu's chevron turns down while it is open.
+      const item = ({ key, label, onPress, isSub, isOpen, depth = 0 }: Item) => (
+        <Box
+          key={`item:${key}:${id}`}
+          {...rounded()}
+          justifyContent="space-between"
+          alignItems="center"
+          gap={1}
+          paddingLeft={1 + 2 * depth}
+          paddingRight={1}
+          paddingY={0}
+          overflow="hidden"
+          hover={{ backgroundColor: HOVER }}
+        >
+          {isRich ? (
+            <Text size="footnote">{label}</Text>
+          ) : (
+            <Button key={`${key}:${id}`} plain onPress={onPress}>
+              <Text size="footnote">{label}</Text>
+            </Button>
+          )}
+          {isSub && icon(chevronSvg(isOpen === true), isOpen ? 'open' : 'closed', CARETS[isOpen ? 1 : 0], MUTED, 12)}
+          {pressAnywhere(`${key}:${id}`, onPress)}
+        </Box>
       )
+      // A thin line between groups: a hairline where the surface paints, a row of box-drawing ones
+      // across the menu on the terminal.
+      const divider = (i: number) =>
+        Svg ? (
+          <Box key={`rule:${i}:${id}`} paddingX={1} paddingY="xs">
+            <Svg source={RULE_SVG} alt="divider" height={1} />
+          </Box>
+        ) : (
+          <Text key={`rule:${i}:${id}`} color={CARD_EDGE}>
+            {'─'.repeat(width)}
+          </Text>
+        )
 
       return [
         <Box key={`acting:${id}`} flexDirection="column">
           {row}
+          {away}
           <Box
             key={`actions:${id}`}
             position="absolute"
             bottom={1}
             right={0}
+            width={width}
             {...rounded(CARD_EDGE)}
             backgroundColor={CARD}
             flexDirection="column"
-            alignItems="flex-start"
-            rowGap={isRich ? 'md' : 'sm'}
-            paddingX="sm"
+            alignItems="stretch"
+            paddingX={isRich ? 'xs' : 0}
             paddingY="xs"
           >
-            {act('mention', '@ Mention', async () => {
-              await $.prompt.fill({ text: `@${name.includes(' ') ? `"${name}"` : name} `, mode: 'insert' }).catch(() => {})
-              await closeActions()
-            })}
-            {act('copy', 'Copy path', async press => {
-              await $.ui.copy({ text: name, surface: press.surface }).catch(() => {})
-              $.ui.toast(`Copied ${name}`)
-              await closeActions()
-            })}
-            {canDiff && act('diff', isDiff ? 'Hide diff' : 'Diff', () => toggleDiff($, abs), isDiff)}
-            {where !== 'tree' && act('show', 'Show in tree', () => showInTree(abs))}
+            {groups.flatMap((group, i) => [...(i > 0 ? [divider(i)] : []), ...group.map(item)])}
           </Box>
         </Box>,
         ...(isDiff && open
@@ -336,14 +453,14 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
       )
 
-    // A press anywhere on a folder's row, where the surface paints: a Button holds only text, so a
-    // row with icons cannot be one. Laid over the row instead, a Button of blank text far wider than
+    // A press anywhere on a row (a folder's, a menu's), where the surface paints: a Button holds
+    // only text, so a row with icons cannot be one. Laid over the row instead, a Button of blank text far wider than
     // any row, so the Button covers the row end to end. (Non-breaking spaces, which a surface does
     // not collapse.) The desktop draws a Button's text on one line, cut to its room with an ellipsis
     // in the Button's own color, which no Text prop hides; so the layer reaches a pane's width past
     // the row's end, and the ellipsis falls there, where the row clips it. No `label`: the desktop
     // draws a label as text, over the chevron and the icon; the key is its address.
-    const pressAnywhere = (key: string, onPress: () => unknown) =>
+    const pressAnywhere = (key: string, onPress: (press: { surface: typeof e.surface }) => unknown) =>
       isRich ? (
         <Box position="absolute" top={0} left={0} right={-e.props.bodyColumns} bottom={0} flexDirection="column" overflow="hidden">
           <Button key={key} plain onPress={onPress}>
@@ -367,9 +484,11 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
     // A rounded chip of a color's tint, a live one with a pulsing dot. It never shrinks, which would
     // wrap its label ("0 / files") in a narrow header.
-    const pill = (label: string, color: string, isLive = false) =>
+    // Given a press, the pill is a control: it lights under the pointer, a press anywhere on it counts.
+    const pill = (label: string, color: string, isLive = false, press?: { key: string; onPress: () => unknown }) =>
       isRich ? (
         <Box
+          key={press ? `pill:${press.key}` : undefined}
           {...rounded(tint(color, '4d'))}
           backgroundColor={tint(color, '1f')}
           paddingX={1}
@@ -377,12 +496,20 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           gap="xs"
           alignItems="center"
           flexShrink={0}
+          {...(press ? { overflow: 'hidden', hover: { backgroundColor: tint(color, '3d') } } : {})}
         >
           {isLive && dot(color, true)}
           <Text color={color} size="footnote" weight="semibold">
             {label}
           </Text>
+          {press && pressAnywhere(press.key, press.onPress)}
         </Box>
+      ) : press ? (
+        <Button key={press.key} plain onPress={press.onPress}>
+          <Text color={color} backgroundColor={tint(color, '2e')} size="footnote" weight="semibold">
+            {` ${label} `}
+          </Text>
+        </Button>
       ) : (
         <Text color={color} backgroundColor={tint(color, '2e')} size="footnote" weight="semibold">
           {` ${label} `}
@@ -771,7 +898,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 <Box gap="xs" alignItems="center">
                   {totals[0] > 0 && pill(`+${totals[0]}`, ADDED)}
                   {totals[1] > 0 && pill(`−${totals[1]}`, REMOVED)}
-                  {pill(`${g.changed.length} changed`, DIRTY)}
+                  {pill(`${g.changed.length} changed`, DIRTY, false, { key: 'changed', onPress: showChanged })}
                 </Box>
               )}
             </Box>
