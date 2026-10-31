@@ -207,5 +207,16 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // Typing in the prompt is a click away from the pane too: it closes a file's actions.
+  on('prompt.edit', async ($, e, next) => {
+    if (await read($, menu).catch(() => null)) {
+      await update($, menu, () => null)
+      await update($, diff, () => null)
+      redraw($)
+    }
+
+    return next(e)
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => renderPane($, e))
 }

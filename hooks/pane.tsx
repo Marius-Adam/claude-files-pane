@@ -36,7 +36,7 @@ import {
   WRITE,
 } from './look'
 import { base, closedAbove, dirOf, isUnder, join, listPath, parentOf, plural, rank, rel, sizeOf, where } from './paths'
-import { DEFAULT_VIEW } from './state'
+import { DEFAULT_VIEW, PANE } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
 // uses it, so every file names its own; state.ts lists the tags they must all share.
@@ -57,6 +57,12 @@ const MATCHES = 50
 // The touched list shows its newest files up to this many, and offers the rest a press away.
 const TOUCHED_ROWS = 8
 
+// The surfaces whose pane held the keyboard while a file's menu was open. A click away from the
+// pane (into the chat, the prompt) takes the keyboard from it, and that closes the menu, as a
+// click away does a native menu's. Each surface by its own: a phone that never focuses the pane
+// closes nothing on the desktop.
+const focusedWithMenu = new Set<string>()
+
 // The pane: the card saying what Claude is doing, git's line, search, the toolbar, the files Claude
 // touched and the project's tree, each file with its actions behind a ⋯. Drawn by register.tsx's
 // `ui.render` hook for the pane.
@@ -67,6 +73,17 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const Input = 'Input' in elements ? elements.Input : null
     // The terminal's table answers `in` for Svg too, but draws none: ask the surface.
     const Svg = e.surface !== 'terminal' && 'Svg' in elements ? elements.Svg : null
+    // A drawing writes no state: the menu closes right after, from a timer.
+    if (e.props.isFocused) {
+      if (await read($, menu)) focusedWithMenu.add(e.surface)
+      else focusedWithMenu.delete(e.surface)
+    } else if (focusedWithMenu.delete(e.surface)) {
+      $.clock.after(0, async () => {
+        await update($, menu, () => null)
+        await update($, diff, () => null)
+        redraw($)
+      })
+    }
     const [cur, list, prior, sc, isAll, v, g, open, acts, foot] = await Promise.all([
       read($, now),
       read($, touched),
@@ -120,15 +137,20 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       await update($, diff, () => null)
       redraw($)
     }
+    // An opened menu, or one a submenu made taller, is scrolled into sight whole.
+    const showActions = (where: Menu['where'], abs: string) =>
+      $.ui.scroll({ in: PANE, to: { key: `actions:${where}:${abs}` }, block: 'nearest' }).catch(() => ({}))
     const toggleActions = async (where: Menu['where'], abs: string) => {
-      await update($, menu, old => (old?.path === abs && old.where === where ? null : { path: abs, where, sub: null }))
+      const next = await update($, menu, old => (old?.path === abs && old.where === where ? null : { path: abs, where, sub: null }))
       await update($, diff, () => null)
       redraw($)
+      if (next) void showActions(where, abs)
     }
     // One submenu open at a time, as in a native menu: opening one folds the other.
     const toggleSub = async (sub: Menu['sub']) => {
-      await update($, menu, old => old && { ...old, sub: old.sub === sub ? null : sub })
+      const next = await update($, menu, old => old && { ...old, sub: old.sub === sub ? null : sub })
       redraw($)
+      if (next) void showActions(next.where, next.path)
     }
 
     // The file in the tree, wherever the tree is: in its own project (the tree moves there, as it
@@ -281,7 +303,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // rows before it, which an absolute Box is painted over, and moves none of them.
     // While a menu is open, a press on any file's row closes it, as a click away does a native menu's,
     // the ⋯ included: a layer over the row takes the press. (A press on any other control in the
-    // pane closes it too, in register.tsx.)
+    // pane closes it too, in register.tsx, and so does one on the pane's plain parts, `away`.)
     const withActions = (row: JSX.Element, where: Menu['where'], abs: string, canDiff: boolean, indent = 0): JSX.Element[] => {
       const away = acts ? pressAnywhere(`away:${where}:${abs}`, closeActions) : null
       if (!isActing(where, abs))
@@ -396,8 +418,12 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
       return [
         <Box key={`acting:${id}`} flexDirection="column">
-          {row}
-          {away}
+          {/* The row clips the layer that reaches past its end, as any row's does; the popover,
+              beside them, hangs outside it. */}
+          <Box flexDirection="column" overflow="hidden">
+            {row}
+            {away}
+          </Box>
           <Box
             key={`actions:${id}`}
             position="absolute"
@@ -468,6 +494,11 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Button>
         </Box>
       ) : null
+
+    // A press on a plain part of the pane (the card, a section's title, a note), where no control
+    // sits, closes a file's menu too: while one is open, a layer over the part takes the press. The
+    // part clips the layer, so it holds `overflow="hidden"`.
+    const pressAway = (key: string) => (acts ? pressAnywhere(`away:${key}`, closeActions) : null)
 
     const dot = (color: string, isLive = false, size = 12) =>
       Svg ? <Svg source={dotSvg(color, isLive)} alt={isLive ? 'live' : 'mark'} width={size} height={size} /> : <Text color={color}>●</Text>
@@ -816,10 +847,11 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // In a narrow pane the name gives way, never the aside.
     const head = (title: string, aside: string | JSX.Element) => (
       <Box justifyContent="space-between" alignItems="center" gap={1} paddingX={1}>
-        <Box flexShrink={1} minWidth={0}>
+        <Box flexShrink={1} minWidth={0} overflow="hidden">
           <Text dimColor weight="bold" size="caption" wrap="truncate-end">
             {title}
           </Text>
+          {pressAway(`head:${title}`)}
         </Box>
         <Box flexShrink={0}>
           {typeof aside !== 'string' ? aside : isRich ? pill(aside, MUTED) : <Text dimColor size="caption">{aside}</Text>}
@@ -851,7 +883,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           gap={1}
         >
           {card.motion === 'pulse' && shimmer(card.color, 400)}
-          <Box gap={1} alignItems="center">
+          <Box gap={1} alignItems="center" overflow="hidden">
             {Svg ? (
               <Svg source={badgeSvg(card.glyph, card.color, card.motion, cardSince())} alt={card.kicker} width={56} height={56} />
             ) : (
@@ -872,6 +904,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 card.sub
               )}
             </Box>
+            {pressAway('card')}
           </Box>
 
           {g !== null && (
@@ -885,10 +918,11 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               paddingY={isRich ? 'xs' : 0}
               flexWrap="wrap"
             >
-              <Box gap="xs" alignItems="center">
+              <Box gap="xs" alignItems="center" overflow="hidden">
                 {icon(BRANCH_SVG, 'branch', '⎇', READ, 16)}
                 <Text weight="semibold">{g.branch}</Text>
                 {g.ahead ? pill(`↑${g.ahead}`, DONE) : null}
+                {pressAway('branch')}
               </Box>
               {g.changed.length === 0 ? (
                 <Text dimColor size="footnote">
@@ -904,7 +938,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             </Box>
           )}
 
-          <Box columnGap={2} rowGap={0} flexWrap="wrap">
+          <Box columnGap={2} rowGap={0} flexWrap="wrap" overflow="hidden">
             <Box gap="xs" alignItems="center">
               {dot(READ)}
               <Text dimColor size="footnote">
@@ -925,6 +959,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 </Text>
               </Box>
             )}
+            {pressAway('legend')}
           </Box>
         </Box>
 
@@ -967,8 +1002,9 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             </Box>,
           )}
           {shownTouched.length === 0 && (
-            <Box paddingX={1}>
+            <Box paddingX={1} overflow="hidden">
               <Text dimColor>Nothing yet</Text>
+              {pressAway('none')}
             </Box>
           )}
           {/* The older files, folded above the newest; opened, the same row folds them again. It
@@ -1055,8 +1091,9 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )}
           <Box flexDirection="column" marginTop="xs">
             {query && matches.length === 0 && (
-              <Box paddingX={1}>
+              <Box paddingX={1} overflow="hidden">
                 <Text dimColor>No file matches "{v.query}".</Text>
+                {pressAway('no-match')}
               </Box>
             )}
             {matches.flatMap(path =>
@@ -1089,8 +1126,9 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             {!query && upRow}
             {rows}
             {rows.length >= TREE_ROWS && (
-              <Box paddingX={1}>
+              <Box paddingX={1} overflow="hidden">
                 <Text dimColor>More files not shown. Search to find them.</Text>
+                {pressAway('cut')}
               </Box>
             )}
           </Box>

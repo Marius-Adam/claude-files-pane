@@ -634,6 +634,82 @@ test('on a surface that paints, a press anywhere on a menu row or on another fil
   await ui.unmount()
 })
 
+test('with a file’s actions open, every layer that reaches past its row is clipped by it', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'more:tree:/proj/src/client.js' })
+  expect(await text(ui, /^@ Mention$/)).toBe('@ Mention')
+
+  // A layer left unclipped lights past the pane's edge under the pointer.
+  type Node = { type?: string; props: { position?: string; right?: number; overflow?: string }; children?: unknown[] }
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as Node[]
+  const isLayer = (one: unknown) => (one as Node | null)?.props?.position === 'absolute' && ((one as Node).props.right ?? 0) < 0
+  const holders = boxes.filter(one => (one.children ?? []).some(isLayer))
+  expect(holders.length).toBe(boxes.filter(isLayer).length)
+  expect(holders.filter(one => one.props.overflow !== 'hidden')).toEqual([])
+  await ui.unmount()
+})
+
+test('a press on a plain part of the pane closes a file’s actions', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  for (const part of ['away:card', 'away:branch', 'away:legend', 'away:head:CLAUDE TOUCHED']) {
+    await ui.press({ key: 'more:touched:/proj/src/client.js' })
+    expect(await text(ui, /^@ Mention$/)).toBe('@ Mention')
+    await ui.press({ key: part })
+    expect(await text(ui, /^@ Mention$/)).toBeUndefined()
+  }
+  await ui.unmount()
+})
+
+test('a click away from the pane, which takes the keyboard from it, closes a file’s actions', async ($, on) => {
+  engine(on)
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+  const focused = { ...PANE.props, isFocused: true }
+  const ui = await $.ui.mount({ ...PANE, props: focused, surface: 'desktop' })
+
+  await ui.press({ key: 'more:touched:/proj/src/client.js' })
+  expect(await text(ui, /^@ Mention$/)).toBe('@ Mention')
+
+  await ui.redraw({ ...focused, isFocused: false })
+  await clock.settle()
+  expect(await text(ui, /^@ Mention$/)).toBeUndefined()
+
+  // A menu opened in a pane that never held the keyboard stays open.
+  await ui.press({ key: 'more:touched:/proj/src/client.js' })
+  await ui.redraw({ ...focused, isFocused: false })
+  await clock.settle()
+  expect(await text(ui, /^@ Mention$/)).toBe('@ Mention')
+  await ui.unmount()
+})
+
+test('typing in the prompt closes a file’s actions', async ($, on) => {
+  engine(on)
+  on('prompt.edit', (_, e) => ({ text: e.text + e.inputText, cursor: e.cursor + e.inputText.length }))
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'more:touched:/proj/src/client.js' })
+  expect(await text(ui, /^@ Mention$/)).toBe('@ Mention')
+
+  // The person's keys raise it; a plugin's `$` has no call for it, so the test reaches it untyped.
+  const prompt = $.prompt as unknown as { edit: (e: unknown) => Promise<unknown> }
+  await prompt.edit({ origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0, inputText: 'h' })
+  expect(await text(ui, /^@ Mention$/)).toBeUndefined()
+  await ui.unmount()
+})
+
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`a press on "N changed" opens the tree to every changed file (${surface})`, async ($, on) => {
     engine(on, { dirty: [' M src/client.js', ' M README.md'], ahead: '0' })
