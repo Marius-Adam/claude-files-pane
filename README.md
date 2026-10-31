@@ -57,7 +57,7 @@
 
 ### Prerequisites
 
-[Claude Code](https://claude.com/claude-code): the desktop app, the VS Code extension or the CLI.
+[Claude Code](https://claude.com/claude-code): the desktop app, the VS Code extension or the CLI, on macOS or Linux. Windows isn't supported yet.
 
 ### Installation
 
