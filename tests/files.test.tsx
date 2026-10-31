@@ -521,6 +521,29 @@ test('two commands at once: the card shows the one still running when the other 
   await ui.unmount()
 })
 
+test('a file committed where Claude did not see it offers no diff', async ($, on) => {
+  const git: GitWorld = { dirty: [' M src/client.js'], ahead: '0' }
+  engine(on, git)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  await ui.press({ key: 'more:touched:/proj/src/client.js' })
+  expect(await text(ui, /^Diff$/)).toBe('Diff')
+  await ui.press({ key: 'more:touched:/proj/src/client.js' })
+
+  // Committed in another session, or by the app: git has nothing left to show for the file.
+  git.dirty = []
+  await $.tool.call({ tool: 'Bash', command: 'ls', description: 'List files' })
+  await settled()
+
+  await ui.press({ key: 'more:touched:/proj/src/client.js' })
+  expect(await text(ui, /^@ Mention$/)).toBe('@ Mention')
+  expect(await text(ui, /^Diff$/)).toBeUndefined()
+  await ui.unmount()
+})
+
 test('the ⋯ on a file opens its actions; Diff shows what changed, and hides it again', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })

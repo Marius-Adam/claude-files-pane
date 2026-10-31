@@ -42,9 +42,12 @@ function gitDirOf($: EngineInterface, dir: string) {
   let found = gitDirs.get(dir)
 
   if (!found) {
-    found = run($, ['git', 'rev-parse', '--absolute-git-dir'], 3000, dir).then(out =>
-      out && out.exitCode === 0 ? out.stdout.trim() || null : null,
-    )
+    // Kept only once git has answered: a run that timed out or could not start asks again next time.
+    found = run($, ['git', 'rev-parse', '--absolute-git-dir'], 3000, dir).then(out => {
+      if (!out) gitDirs.delete(dir)
+
+      return out && out.exitCode === 0 ? out.stdout.trim() || null : null
+    })
     gitDirs.set(dir, found)
   }
 

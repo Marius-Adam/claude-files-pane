@@ -806,8 +806,11 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )}
           {keptTouched.flatMap(one => {
             const abs = absOf(cwd, one.path)
-            // A diff for a file with changes not yet committed.
-            const canDiff = (one.isEdited && !one.isCommitted) || changed.has(keyOf(one.path) ?? '')
+            // A diff for a file with changes not yet committed: as git reports it where git is read,
+            // since a commit Claude did not make here (another session's, the app's, the person's)
+            // leaves nothing to show; else as Claude left it.
+            const key = keyOf(one.path)
+            const canDiff = g && key !== null ? changed.has(key) : one.isEdited && !one.isCommitted
             // As in the tree: the tint and shimmer say what Claude did with the file, the name takes its color.
             const background = tint(accentOf(one), one.isActive || one.isCommitted ? '2e' : '14')
 
