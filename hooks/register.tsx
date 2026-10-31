@@ -163,6 +163,10 @@ export const register: Register = on => {
       // The last turn's files go to the whole-session list before this turn starts its own.
       await keepTurn($).catch(() => {})
       await update($, touched, () => [])
+      // A prompt sent is a click away from a file's actions: they close, with their diff, rather
+      // than come back on the file's row when Claude touches it again.
+      await update($, menu, () => null)
+      await update($, diff, () => null)
       await setNow($, () => ({ verb: 'thinking' }))
       await update($, status, () => null)
       redraw($)

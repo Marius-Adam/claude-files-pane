@@ -137,6 +137,23 @@ test('the menu opens again with its submenus folded', async ($, on) => {
   await ui.unmount()
 })
 
+test('a new turn closes a menu left open, so it does not come back when Claude touches its file again', async ($, on) => {
+  engine(on, { system: 'Darwin', installed: ['Visual Studio Code'] })
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  const ui = await start($)
+
+  await ui.press({ key: MORE })
+  await ui.press(press('open'))
+  expect(await shows(ui, 'VS Code')).toBe(true)
+
+  await $.turn.start({ turnId: 't2', prompt: 'again' } as never)
+  await $.tool.call({ tool: 'Read', file_path: FILE })
+
+  expect(await shows(ui, 'Copy')).toBe(false)
+  expect(await shows(ui, 'VS Code')).toBe(false)
+  await ui.unmount()
+})
+
 test('on a Mac, Open in lists only the editors installed, and opens the file in the one pressed', async ($, on) => {
   const { ran } = engine(on, { system: 'Darwin', installed: ['Visual Studio Code', 'Cursor'] })
   const ui = await start($)
