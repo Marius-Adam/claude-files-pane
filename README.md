@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" alt="The Files pane following Claude through a task: reading and editing two files with the tree opening to each, running the tests, then committing" width="880">
+  <img src="docs/demo.gif" alt="The Files pane in the Claude desktop app, recorded as Claude fixes a bug in this repository: the files it reads turn purple in the touched list, the two it edits turn orange with their line counts, the card shows the test run, and a file's ⋯ menu offers Copy, Open in an editor and its diff, drawn as numbered rows" width="880">
 </p>
 
 ## Install
@@ -95,7 +95,7 @@ Claude Code writes its API types into `.claude-plugin/types/` the first time it 
 | `hooks/paths.ts` | Paths and sizes as the pane prints them, and search ranking |
 | `hooks/look.ts` | Colours, type chips and SVGs |
 | `hooks/icons.ts`, `icon-svgs.ts` | Which vscode-icons icon a file or folder gets, and the SVGs (generated) |
-| `scripts/demo/` | Redraws `docs/demo.gif` from the pane's own output |
+| `scripts/demo/` | Turns a screen recording of the pane into `docs/demo.gif` |
 | `tests/` | Tests, against the terminal and desktop surfaces |
 
 To add an icon, map a name, extension or folder in `hooks/icons.ts` to a [vscode-icons](https://icon-sets.iconify.design/vscode-icons/) id, then:
@@ -104,10 +104,10 @@ To add an icon, map a name, extension or folder in `hooks/icons.ts` to a [vscode
 npm pack @iconify-json/vscode-icons && tar xzf iconify-json-vscode-icons-*.tgz && python3 scripts/gen_icons.py package/icons.json hooks/icons.ts hooks/icon-svgs.ts
 ```
 
-To redraw the demo GIF (needs Node 22+, Google Chrome and Python 3 with Pillow):
+The demo GIF is a recording of the desktop app (needs macOS, ffmpeg, gifski and Python 3 with Pillow). Record the window while Claude works, `touch stop` to end it, set the parts to show in `scripts/demo/cuts.json`, then make the GIF:
 
 ```bash
-scripts/demo/make.sh
+python3 scripts/demo/record.py take.mov stop <x,y,w,h> && scripts/demo/make.sh take.mov
 ```
 
 </details>
@@ -122,4 +122,4 @@ scripts/demo/make.sh
 
 ## License
 
-[MIT](LICENSE). Icons from [vscode-icons](https://github.com/vscode-icons/vscode-icons) (MIT). The demo is drawn in the Tokyo Night colours of [claude-skins](https://github.com/hellosverre/claude-skins).
+[MIT](LICENSE). Icons from [vscode-icons](https://github.com/vscode-icons/vscode-icons) (MIT).
