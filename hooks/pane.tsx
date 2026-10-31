@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, RenderInput } from 'claude-code'
 
 import type { Menu, Touch, View } from '../types'
-import { absOf, cardSince, reveal, toggleDiff } from './activity'
+import { absOf, cardSince, follow, reveal, toggleDiff } from './activity'
 import { forget, indexFiles, listDir, redraw, refreshGit, SKIP } from './disk'
 import { fileIcon, folderIcon } from './icons'
 import {
@@ -32,7 +32,7 @@ import {
   TOOL,
   WRITE,
 } from './look'
-import { base, closedAbove, dirOf, isUnder, join, listPath, parentOf, plural, rank, rel, sizeOf, whenOf, where } from './paths'
+import { base, dirOf, join, listPath, parentOf, plural, rank, rel, sizeOf, where } from './paths'
 import { DEFAULT_VIEW } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
@@ -43,6 +43,7 @@ const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: '
 const menu = atom({ plugin: 'files-pane', key: 'menu' } as const, null, { shape: 'menu-1' })
 const now = atom({ plugin: 'files-pane', key: 'now' } as const, null, { shape: 'now-3' })
 const scope = atom({ plugin: 'files-pane', key: 'scope' } as const, 'turn', { shape: 'scope-1' })
+const isTouchedAll = atom({ plugin: 'files-pane', key: 'isTouchedAll' } as const, false)
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
 const tick = atom({ plugin: 'files-pane', key: 'tick' } as const, 0)
 const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-2' })
@@ -50,6 +51,8 @@ const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, 
 
 const TREE_ROWS = 300
 const MATCHES = 50
+// The touched list shows its newest files up to this many, and offers the rest a press away.
+const TOUCHED_ROWS = 8
 
 // The pane: the card saying what Claude is doing, git's line, search, the toolbar, the files Claude
 // touched and the project's tree, each file with its actions behind a ⋯. Drawn by register.tsx's
@@ -62,11 +65,12 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const Code = 'Code' in elements ? elements.Code : null
     // The terminal's table answers `in` for Svg too, but draws none: ask the surface.
     const Svg = e.surface !== 'terminal' && 'Svg' in elements ? elements.Svg : null
-    const [cur, list, prior, sc, v, g, open, acts, foot] = await Promise.all([
+    const [cur, list, prior, sc, isAll, v, g, open, acts, foot] = await Promise.all([
       read($, now),
       read($, touched),
       read($, earlier),
       read($, scope),
+      read($, isTouchedAll),
       read($, view),
       read($, git),
       read($, diff),
@@ -118,17 +122,15 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       redraw($)
     }
 
-    // The file in the tree: its folders opened down to it, search cleared, and its row in sight.
+    // The file in the tree, wherever the tree is: in its own project (the tree moves there, as it
+    // follows Claude), at a folder that holds it, its folders opened down to it, search cleared, and
+    // its row in sight.
     const showInTree = async (abs: string) => {
-      const path = abs.slice(home.length + 1)
+      const path = await follow($, cwd, abs, true)
 
-      await update($, view, old => {
-        const start = isUnder(old.dir, path) ? old : { ...old, dir: '' }
-
-        return { ...start, query: '', expanded: [...start.expanded, ...closedAbove(start, path)] }
-      })
+      await update($, view, old => ({ ...old, query: '' }))
       await closeActions()
-      void reveal($, path)
+      if (path) void reveal($, path)
     }
 
     // A surface that paints (not the terminal, where a border is box-drawing characters three rows
@@ -155,12 +157,14 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     }
 
     // A toolbar action: a small rounded chip, dim at rest, tinted with a check while the setting it
-    // switches is on. The desktop draws the Button inside with its own padding, so the chip adds
-    // none and the label is caption-sized: the row stays one line in a narrow pane.
-    const tool = (key: string, label: string, onPress: () => unknown, state: 'on' | 'off' | 'idle' = 'off') => {
+    // switches is on, the check in its glyph's place. The desktop draws the Button inside with its
+    // own padding, so the chip adds none and the label is caption-sized: the row stays one line in a
+    // narrow pane.
+    const tool = (key: string, label: string, onPress: () => unknown, state: 'on' | 'off' | 'idle' = 'off', glyph = '') => {
+      const mark = state === 'on' ? '✓' : glyph
       const button = (
         <Button key={key} plain dimColor={state !== 'on'} onPress={onPress}>
-          <Text size="caption">{state === 'on' ? `✓ ${label}` : label}</Text>
+          <Text size="caption">{mark ? `${mark} ${label}` : label}</Text>
         </Button>
       )
 
@@ -181,17 +185,23 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     }
 
     // The ⋯ at the end of a file's row: a press opens the file's actions under it, or closes them.
+    // The desktop pads a Button itself, so a row ending in one keeps no right padding of its own:
+    // the ⋯ reaches the row's end, where a folder row's count sits.
     const more = (where: Menu['where'], abs: string) => (
       <Button key={`more:${where}:${abs}`} plain dimColor={!isActing(where, abs)} onPress={() => toggleActions(where, abs)}>
         <Text size="footnote">⋯</Text>
       </Button>
     )
 
-    // A file's actions, under its row while its ⋯ is pressed: put it in the prompt, copy its path,
-    // see its diff (a file git reports as changed) and, from another list, find it in the tree.
-    // Then the diff itself, while it is open.
-    const actions = (where: Menu['where'], abs: string, canDiff: boolean, indent = 0): JSX.Element[] => {
-      if (!isActing(where, abs)) return []
+    // A file's row and, while its ⋯ is pressed, its actions in a popover over the row above, at the
+    // ⋯'s end: put it in the prompt, copy its path, see its diff (a file git reports as changed) and,
+    // from another list, find it in the tree. Then the diff itself, under the row while it is open.
+    // The popover hangs off a Box around the row, as the row clips what it holds; it floats over the
+    // rows before it, which an absolute Box is painted over, and moves none of them. Its actions
+    // stack one to a line, left-aligned, spaced and padded in steps each surface sizes its own way:
+    // a step wider apart where the surface paints, as the terminal draws that step as a blank line.
+    const withActions = (row: JSX.Element, where: Menu['where'], abs: string, canDiff: boolean, indent = 0): JSX.Element[] => {
+      if (!isActing(where, abs)) return [row]
 
       const name = rel(cwd, abs)
       const isDiff = canDiff && Code !== null && open?.path === abs
@@ -203,18 +213,33 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       )
 
       return [
-        <Box key={`actions:${id}`} columnGap={2} rowGap={0} flexWrap="wrap" paddingLeft={indent + 1} paddingRight={1}>
-          {act('mention', '@ Mention', async () => {
-            await $.prompt.fill({ text: `@${name.includes(' ') ? `"${name}"` : name} `, mode: 'insert' }).catch(() => {})
-            await closeActions()
-          })}
-          {act('copy', 'Copy path', async press => {
-            await $.ui.copy({ text: name, surface: press.surface }).catch(() => {})
-            $.ui.toast(`Copied ${name}`)
-            await closeActions()
-          })}
-          {canDiff && Code !== null && act('diff', isDiff ? 'Hide diff' : 'Diff', () => toggleDiff($, abs), isDiff)}
-          {where !== 'tree' && abs.startsWith(`${home}/`) && act('show', 'Show in tree', () => showInTree(abs))}
+        <Box key={`acting:${id}`} flexDirection="column">
+          {row}
+          <Box
+            key={`actions:${id}`}
+            position="absolute"
+            bottom={1}
+            right={0}
+            {...rounded(CARD_EDGE)}
+            backgroundColor={CARD}
+            flexDirection="column"
+            alignItems="flex-start"
+            rowGap={isRich ? 'md' : 'sm'}
+            paddingX="sm"
+            paddingY="xs"
+          >
+            {act('mention', '@ Mention', async () => {
+              await $.prompt.fill({ text: `@${name.includes(' ') ? `"${name}"` : name} `, mode: 'insert' }).catch(() => {})
+              await closeActions()
+            })}
+            {act('copy', 'Copy path', async press => {
+              await $.ui.copy({ text: name, surface: press.surface }).catch(() => {})
+              $.ui.toast(`Copied ${name}`)
+              await closeActions()
+            })}
+            {canDiff && Code !== null && act('diff', isDiff ? 'Hide diff' : 'Diff', () => toggleDiff($, abs), isDiff)}
+            {where !== 'tree' && act('show', 'Show in tree', () => showInTree(abs))}
+          </Box>
         </Box>,
         ...(isDiff && open && Code
           ? [
@@ -257,17 +282,16 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
     // A press anywhere on a folder's row, where the surface paints: a Button holds only text, so a
     // row with icons cannot be one. Laid over the row instead, a Button of blank text far wider than
-    // any row, which the row cuts to its width, so the Button covers the row end to end.
-    // (Non-breaking spaces, which a surface does not collapse; never truncated, which would draw
-    // an ellipsis, since the desktop gives a Button's text its own color.) No `label`: the desktop
+    // any row, so the Button covers the row end to end. (Non-breaking spaces, which a surface does
+    // not collapse.) The desktop draws a Button's text on one line, cut to its room with an ellipsis
+    // in the Button's own color, which no Text prop hides; so the layer reaches a pane's width past
+    // the row's end, and the ellipsis falls there, where the row clips it. No `label`: the desktop
     // draws a label as text, over the chevron and the icon; the key is its address.
     const pressAnywhere = (key: string, onPress: () => unknown) =>
       isRich ? (
-        <Box position="absolute" top={0} left={0} right={0} bottom={0} flexDirection="column" overflow="hidden">
+        <Box position="absolute" top={0} left={0} right={-e.props.bodyColumns} bottom={0} flexDirection="column" overflow="hidden">
           <Button key={key} plain onPress={onPress}>
-            <Text color={CLEAR}>
-              {' '.repeat(Math.max(600, e.props.bodyColumns * 12))}
-            </Text>
+            <Text color={CLEAR}>{'\u00a0'.repeat(Math.max(600, e.props.bodyColumns * 12))}</Text>
           </Button>
         </Box>
       ) : null
@@ -285,13 +309,21 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
       ) : null
 
-    // A rounded chip of a color's tint, a live one with a pulsing dot. A compact one, for a tree row,
-    // is a size smaller so the row keeps room around it rather than growing to its height.
-    const pill = (label: string, color: string, isLive = false, isCompact = false) =>
+    // A rounded chip of a color's tint, a live one with a pulsing dot. It never shrinks, which would
+    // wrap its label ("0 / files") in a narrow header.
+    const pill = (label: string, color: string, isLive = false) =>
       isRich ? (
-        <Box {...rounded(tint(color, '4d'))} backgroundColor={tint(color, '1f')} paddingX={1} paddingY={0} gap="xs" alignItems="center">
-          {isLive && dot(color, true, isCompact ? 10 : 12)}
-          <Text color={color} size={isCompact ? 'caption' : 'footnote'} weight="semibold">
+        <Box
+          {...rounded(tint(color, '4d'))}
+          backgroundColor={tint(color, '1f')}
+          paddingX={1}
+          paddingY={0}
+          gap="xs"
+          alignItems="center"
+          flexShrink={0}
+        >
+          {isLive && dot(color, true)}
+          <Text color={color} size="footnote" weight="semibold">
             {label}
           </Text>
         </Box>
@@ -467,6 +499,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         .filter(entry => !SKIP.has(entry.name) || v.showHidden)
         .filter(entry => v.showHidden || !entry.name.startsWith('.'))
         .sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name))
+      // A file keeps the chevron's width only to line up with a folder beside it.
+      const hasDirs = sorted.some(entry => entry.kind === 'dir')
       for (const entry of sorted) {
         if (rows.length >= TREE_ROWS) return
 
@@ -524,23 +558,23 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           const accent = touch ? accentOf(touch) : isDirty ? DIRTY : undefined
           // The row's tint: strong while Claude has the file or just committed it, faint once it let go.
           const background = touch ? tint(accentOf(touch), touch.isActive || touch.isCommitted ? '2e' : '14') : undefined
+          // No pill for what Claude is doing with the file: the row's tint and shimmer say it.
           const right = (() => {
-            if (touch?.isActive) return pill(touch.isEdited ? 'editing' : 'reading', accentOf(touch), true, true)
-            if (touch?.isCommitted) return pill('committed', DONE, false, true)
             if (isDirty && g?.lines[path]) return counts(path)
             if (v.showSizes) return <Text dimColor tabular size="footnote">{sizeOf(entry.size)}</Text>
 
-            return <Text dimColor tabular size="footnote">{whenOf(entry.mtimeMs)}</Text>
+            return null
           })()
 
-          rows.push(
+          const row = (
             <Box
               key={`row:${path}`}
               {...rounded(touch?.isActive ? tint(accentOf(touch), '59') : CLEAR)}
               justifyContent="space-between"
               alignItems="center"
               gap={1}
-              paddingX={1}
+              paddingLeft={1}
+              paddingRight={0}
               paddingY={0}
               backgroundColor={background}
               overflow="hidden"
@@ -548,9 +582,9 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             >
               {touch?.isActive && shimmer(accentOf(touch))}
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
-                {/* The chevron's width, unseen, so a file's icon lines up with its folder's. */}
+                {/* The chevron's width, unseen, so a file's icon lines up with a sibling folder's. */}
                 <Box gap="xs" alignItems="center">
-                  {chevron()}
+                  {hasDirs && chevron()}
                   {chip(entry.name)}
                 </Box>
                 <Text
@@ -566,40 +600,59 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 {right}
                 {more('tree', join(home, path))}
               </Box>
-            </Box>,
-            ...actions('tree', join(home, path), isDirty, indent),
+            </Box>
           )
+
+          rows.push(...withActions(row, 'tree', join(home, path), isDirty, indent))
         }
       }
     }
+
+    // The way up, the tree's first row: the folder above the one shown, past the project's top too.
+    const upRow = (
+      <Box key="row:.." {...rounded()} alignItems="center" gap={1} paddingX={1} paddingY={0} overflow="hidden" hover={{ backgroundColor: HOVER }}>
+        <Box gap="xs" alignItems="center">
+          {chevron()}
+          {icon(folderIcon('..', false), 'up', '▪', MUTED, 16)}
+        </Box>
+        <Button key="up" plain dimColor onPress={() => setView({ dir: parentOf(v.dir), expanded: [] })}>
+          ..
+        </Button>
+        {pressAnywhere('up:row', () => setView({ dir: parentOf(v.dir), expanded: [] }))}
+      </Box>
+    )
 
     const query = v.query.trim().toLowerCase()
     const matches = query ? rank(await indexFiles($, home), query, MATCHES) : []
 
     if (!query) await walk(v.dir, 0)
 
-    const badge = (one: Touch) => {
-      if (one.isCommitted) return pill('Committed', DONE)
-      if (one.isActive) return one.isEdited ? pill('Editing', EDIT, true) : pill('Reading', READ, true)
-
-      return one.isEdited ? pill('Edited', EDIT) : pill('Opened', READ)
-    }
-
     const totals = Object.values(g?.lines ?? {}).reduce<[number, number]>(([a, d], [x, y]) => [a + x, d + y], [0, 0])
 
     // A section's head: its name in small caps and, beside it, a quiet count or place, or controls.
+    // In a narrow pane the name gives way, never the aside.
     const head = (title: string, aside: string | JSX.Element) => (
       <Box justifyContent="space-between" alignItems="center" gap={1} paddingX={1}>
-        <Text dimColor weight="bold" size="caption">
-          {title}
-        </Text>
-        {typeof aside !== 'string' ? aside : isRich ? pill(aside, MUTED) : <Text dimColor size="caption">{aside}</Text>}
+        <Box flexShrink={1} minWidth={0}>
+          <Text dimColor weight="bold" size="caption" wrap="truncate-end">
+            {title}
+          </Text>
+        </Box>
+        <Box flexShrink={0}>
+          {typeof aside !== 'string' ? aside : isRich ? pill(aside, MUTED) : <Text dimColor size="caption">{aside}</Text>}
+        </Box>
       </Box>
     )
 
     // The touched list: this turn's files, or with the whole session's, the earlier turns' first.
     const isSession = sc === 'session'
     const shownTouched = isSession ? [...prior.filter(one => !list.some(now => now.path === one.path)), ...list] : list
+    // A long list shows its newest files and folds the older ones into a row that opens them; a
+    // file Claude has in hand, or whose actions are open, shows wherever it sits.
+    const isFolded = shownTouched.length > TOUCHED_ROWS && !isAll
+    const newest = shownTouched.slice(-TOUCHED_ROWS)
+    const keptTouched = isFolded ? shownTouched.filter(one => newest.includes(one) || one.isActive || acts?.path === absOf(cwd, one.path)) : shownTouched
+    const foldedCount = shownTouched.length - keptTouched.length
 
     // While Claude is idle the card sits on the theme's soft surface; otherwise on its state's tint.
     const isIdle = card.color === MUTED
@@ -710,10 +763,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             redraw($)
           })}
           {tool('collapse', '⊟ Collapse', () => setView({ expanded: [] }), v.expanded.length === 0 ? 'idle' : 'off')}
-          {tool('up', '↑ Up', () => setView({ dir: parentOf(v.dir), expanded: [] }))}
-          {(v.dir !== '' || v.root !== '') && tool('home', '⌂ Project', () => setView({ root: '', dir: '', expanded: [] }))}
-          {tool('sizes', 'Sizes', () => setView({ showSizes: !v.showSizes }), v.showSizes ? 'on' : 'off')}
-          {tool('hidden', 'Dotfiles', () => setView({ showHidden: !v.showHidden }), v.showHidden ? 'on' : 'off')}
+          {tool('sizes', 'Sizes', () => setView({ showSizes: !v.showSizes }), v.showSizes ? 'on' : 'off', '⇲')}
+          {tool('hidden', 'Dotfiles', () => setView({ showHidden: !v.showHidden }), v.showHidden ? 'on' : 'off', '◌')}
         </Box>
 
         <Box flexDirection="column" borderStyle="round" borderColor={CARD_EDGE} backgroundColor={isRich ? CARD : undefined} gap="xs">
@@ -737,30 +788,49 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               <Text dimColor>Nothing yet</Text>
             </Box>
           )}
-          {shownTouched.flatMap(one => {
+          {/* The older files, folded above the newest; opened, the same row folds them again. */}
+          {(isFolded ? foldedCount > 0 : shownTouched.length > TOUCHED_ROWS) && (
+            <Box key="touched-fold" paddingX={1}>
+              <Button
+                key="touched-all"
+                plain
+                dimColor
+                onPress={async () => {
+                  await update($, isTouchedAll, old => !old)
+                  redraw($)
+                }}
+              >
+                <Text size="footnote">{isFolded ? `${CARETS[0]} ${plural(foldedCount, 'earlier file')}` : `${CARETS[1]} Show fewer`}</Text>
+              </Button>
+            </Box>
+          )}
+          {keptTouched.flatMap(one => {
             const abs = absOf(cwd, one.path)
             // A diff for a file with changes not yet committed.
             const canDiff = (one.isEdited && !one.isCommitted) || changed.has(keyOf(one.path) ?? '')
+            // As in the tree: the tint and shimmer say what Claude did with the file, the name takes its color.
+            const background = tint(accentOf(one), one.isActive || one.isCommitted ? '2e' : '14')
 
-            return [
+            return withActions(
               <Box
                 key={`touch:${one.path}`}
                 {...rounded(one.isActive ? tint(accentOf(one), '59') : CLEAR)}
-                backgroundColor={one.isActive ? tint(accentOf(one), '1f') : undefined}
+                backgroundColor={background}
                 justifyContent="space-between"
                 alignItems="center"
                 gap={1}
-                paddingX={1}
+                paddingLeft={1}
+                paddingRight={0}
                 paddingY={0}
                 overflow="hidden"
-                hover={{ backgroundColor: one.isActive ? tint(accentOf(one), '2e') : 'userMessageBackgroundHover' }}
+                hover={{ backgroundColor: background }}
               >
                 {one.isActive && shimmer(accentOf(one))}
                 {/* One line: the name keeps its room, the folder gives way from its start. */}
                 <Box gap={1} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
                   {chip(base(one.path))}
                   <Box flexShrink={1}>
-                    <Text weight="semibold" wrap="truncate-end">
+                    <Text color={accentOf(one)} weight="semibold" wrap="truncate-end">
                       {base(one.path)}
                     </Text>
                   </Box>
@@ -772,45 +842,64 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 </Box>
                 <Box gap={1} alignItems="center" flexShrink={0}>
                   {one.isEdited && !one.isCommitted && counts(one.path)}
-                  {badge(one)}
                   {more('touched', abs)}
                 </Box>
               </Box>,
-              ...actions('touched', abs, canDiff),
-            ]
+              'touched',
+              abs,
+              canDiff,
+            )
           })}
         </Box>
 
         <Box flexDirection="column" borderStyle="round" borderColor={CARD_EDGE} backgroundColor={isRich ? CARD : undefined} gap={0}>
-          {head(query ? 'MATCHES' : 'ALL FILES', query ? plural(matches.length, 'file') : v.dir ? base(v.dir) : project)}
+          {head(
+            query ? 'MATCHES' : 'ALL FILES',
+            query ? (
+              plural(matches.length, 'file')
+            ) : v.dir !== '' || v.root !== '' ? (
+              <Box gap="xs" alignItems="center">
+                {tool('home', '⌂ Project', () => setView({ root: '', dir: '', expanded: [] }))}
+                {isRich ? pill(v.dir ? base(v.dir) : project, MUTED) : <Text dimColor size="caption">{v.dir ? base(v.dir) : project}</Text>}
+              </Box>
+            ) : (
+              project
+            ),
+          )}
           <Box flexDirection="column" marginTop="xs">
             {query && matches.length === 0 && (
               <Box paddingX={1}>
                 <Text dimColor>No file matches "{v.query}".</Text>
               </Box>
             )}
-            {matches.flatMap(path => [
-              <Box
-                key={`match:${path}`}
-                {...rounded()}
-                justifyContent="space-between"
-                gap={1}
-                alignItems="center"
-                paddingX={1}
-                paddingY={0}
-                overflow="hidden"
-                hover={{ backgroundColor: HOVER }}
-              >
-                <Box gap={1} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
-                  {chip(base(path))}
-                  <Text color={byPath.has(path) ? accentOf(byPath.get(path)!) : changed.has(path) ? DIRTY : undefined} wrap="truncate-start">
-                    {path}
-                  </Text>
-                </Box>
-                <Box flexShrink={0}>{more('match', join(home, path))}</Box>
-              </Box>,
-              ...actions('match', join(home, path), changed.has(path)),
-            ])}
+            {matches.flatMap(path =>
+              withActions(
+                <Box
+                  key={`match:${path}`}
+                  {...rounded()}
+                  justifyContent="space-between"
+                  gap={1}
+                  alignItems="center"
+                  paddingLeft={1}
+                  paddingRight={0}
+                  paddingY={0}
+                  overflow="hidden"
+                  hover={{ backgroundColor: HOVER }}
+                >
+                  <Box gap={1} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
+                    {chip(base(path))}
+                    <Text color={byPath.has(path) ? accentOf(byPath.get(path)!) : changed.has(path) ? DIRTY : undefined} wrap="truncate-start">
+                      {path}
+                    </Text>
+                  </Box>
+                  <Box flexShrink={0}>{more('match', join(home, path))}</Box>
+                </Box>,
+                'match',
+                join(home, path),
+                changed.has(path),
+              ),
+            )}
+            {!query && upRow}
             {rows}
             {rows.length >= TREE_ROWS && (
               <Box paddingX={1}>

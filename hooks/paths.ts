@@ -15,24 +15,6 @@ export const sizeOf = (bytes: number) => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-// Today's files show the time, older ones the day: 15:40, 3 Sep, 3 Sep 2024.
-export const whenOf = (ms: number) => {
-  if (!ms) return ''
-
-  const date = new Date(ms)
-  const today = new Date()
-
-  if (date.toDateString() === today.toDateString()) {
-    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-  }
-
-  const day = `${date.getDate()} ${MONTHS[date.getMonth()]}`
-
-  return date.getFullYear() === today.getFullYear() ? day : `${day} ${date.getFullYear()}`
-}
-
 // The folder above `dir`, which may climb past the project as `..` segments.
 export const parentOf = (dir: string) => {
   if (dir === '' || dir.split('/').every(part => part === '..')) return join(dir, '..')

@@ -54,6 +54,8 @@ declare module 'claude-code' {
       touched: Shaped<Touch[]>
       earlier: Shaped<Touch[]>
       scope: Shaped<Scope>
+      // Whether the touched list shows every file, past the newest few it shows by itself.
+      isTouchedAll: boolean
       view: Shaped<View>
       git: Shaped<Git | null>
       diff: Shaped<Diff | null>
