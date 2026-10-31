@@ -1,0 +1,24 @@
+# Validates the mod and runs its tests on every push and pull request. Both run without a login.
+# Type-checking needs the API types Claude Code writes when it loads the mod, so it stays local:
+# `npx -p typescript tsc -p . --noEmit` (see the README's Develop section).
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Validate the mod
+        run: claude plugin validate .
+      - name: Run the tests
+        run: claude plugin test .

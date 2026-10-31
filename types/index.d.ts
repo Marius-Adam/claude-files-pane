@@ -8,9 +8,6 @@ export type Now =
   | { verb: 'done'; edited: string[]; read: string[] }
   | { verb: 'committed'; hash: string; files: string[] }
 
-// A folder opening in the tree: its rows appear one by one from `at`, its chevron turns.
-export type Opening = { path: string; at: number; count: number }
-
 // A file Claude touched this turn, its path relative to the working directory.
 export type Touch = { path: string; isEdited: boolean; isActive: boolean; isCommitted: boolean }
 
@@ -39,15 +36,31 @@ export type Git = {
 // The line at the foot of the pane while Claude commits, and the commit it made.
 export type Status = { verb: 'committing' } | { verb: 'committed'; hash: string }
 
+// The diff open under a file's row: the file, absolute, its unified-diff hunks since HEAD, and how
+// many lines were left out past the pane's limit.
+export type Diff = { path: string; text: string; more: number }
+
+// The file whose actions are open under its row (its ⋯ pressed), absolute, and which list the row
+// is in: the tree, search's matches or the files Claude touched.
+export type Menu = { path: string; where: 'tree' | 'match' | 'touched' }
+
+// What the touched list shows: this turn's files, or every file Claude touched this session.
+export type Scope = 'turn' | 'session'
+
 declare module 'claude-code' {
   interface PluginState {
     'files-pane': {
       now: Shaped<Now | null>
       touched: Shaped<Touch[]>
+      earlier: Shaped<Touch[]>
+      scope: Shaped<Scope>
+      // Whether the touched list shows every file, past the newest few it shows by itself.
+      isTouchedAll: boolean
       view: Shaped<View>
       git: Shaped<Git | null>
+      diff: Shaped<Diff | null>
+      menu: Shaped<Menu | null>
       status: Shaped<Status | null>
-      opening: Shaped<Opening | null>
       tick: number
     }
   }
