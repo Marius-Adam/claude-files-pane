@@ -120,6 +120,10 @@ python3 scripts/demo/record.py take.mov stop <x,y,w,h> && scripts/demo/make.sh t
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
+## Support
+
+Files pane is free. If it saves you time, you can [buy me a coffee on Ko-fi](https://ko-fi.com/adamms).
+
 ## License
 
 [MIT](LICENSE). Icons from [vscode-icons](https://github.com/vscode-icons/vscode-icons) (MIT).
