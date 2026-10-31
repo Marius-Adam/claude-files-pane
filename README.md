@@ -29,8 +29,8 @@ Restart Claude Code and the pane opens beside the chat. Closed it? `/files` brin
 ## What you see
 
 - **What Claude is doing, right now.** Its thinking as it streams, the command it runs, the file it reads or edits, then what the turn changed.
-- **A tree that follows Claude.** Folders open to each file Claude edits and its row shimmers, even in another project. **⌂ Project** takes you home.
-- **Every file it touched**, with `Reading`, `Edited` and `Committed` pills and the lines added and removed. **Whole session** keeps the earlier turns' files too.
+- **A tree that follows Claude.** Folders open to each file Claude edits and its row shimmers, even in another project. A `..` row at the top climbs a folder, and **⌂ Project** in its header takes you home.
+- **Every file it touched**, each row tinted by what Claude did with it and shimmering while it works on it, with the lines added and removed. **Whole session** keeps the earlier turns' files too.
 - **A file's actions behind its ⋯**: put it in your prompt as `@path`, copy its path, see its **Diff** right under the row, or find it in the tree.
 - **Git at a glance.** Branch, commits ahead, changed files and line counts; ignored files are dimmed.
 - **VS Code's icons, dates and sizes, and its kind of search**: type a few letters of a name, best matches first.

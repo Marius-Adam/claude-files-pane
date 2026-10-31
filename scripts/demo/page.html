@@ -187,8 +187,11 @@ const build = node => {
       el.append(p.value || p.placeholder || '')
       return el
     }
-    case 'Svg':
-      return inlineSvg(p.source, p.width ?? 16, p.height ?? 16)
+    case 'Svg': {
+      const svg = inlineSvg(p.source, p.width ?? 16, p.height ?? 16)
+      if (p.alt) svg.setAttribute('aria-label', p.alt)
+      return svg
+    }
     default:
       el = document.createElement('div')
   }
@@ -224,7 +227,7 @@ window.show = (frame, tree) => {
   }
 
   // The pane follows the file Claude has in hand, as the plugin's reveal does: the row with the
-  // live pill, brought into sight a little at a time.
+  // shimmer, brought into sight a little at a time.
   const body = document.getElementById('body')
   const rows = [...root.querySelectorAll('.Box')].filter(el => el.style.borderRadius === '7px')
   // A press the person makes: lit, a pointer on it, and the pane brought to it like a live row.
@@ -232,7 +235,7 @@ window.show = (frame, tree) => {
   const pressed = frame.press ? root.querySelector(`[data-key="${CSS.escape(frame.press)}"]`) : null
   const lit = pressed && (pressed.closest('[data-key^="row:"]') ?? pressed)
   if (lit) lit.classList.add('pressed')
-  const target = lit ?? rows.find(row => /editing|reading/.test(row.textContent))
+  const target = lit ?? rows.find(row => row.querySelector('svg.Svg[aria-label="working"]'))
   let want = scrollTop
   if (target) {
     // Measured against the whole tree: a row's offsetTop counts from the folder box it sits in.
