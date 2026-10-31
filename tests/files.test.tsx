@@ -5,6 +5,7 @@ import { SVGS } from '../hooks/icon-svgs'
 import { fileIcon, folderIcon } from '../hooks/icons'
 import { rowsOf } from '../hooks/diff'
 import { rank } from '../hooks/paths'
+import { LOGGED_RETRY_AND_SLOWER_DELAY } from './git-diffs'
 
 const PANE = {
   plugin: 'files-pane',
@@ -89,6 +90,13 @@ const settled = async () => {
 
 const text = async (ui: { find: (q: { type: string; text: RegExp }) => Promise<{ text?: string } | undefined> }, pattern: RegExp) =>
   (await ui.find({ type: 'Text', text: pattern }))?.text
+
+// Every text the pane draws, in order, as a person reads it: each one's padding off, a space between.
+const reading = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) =>
+  ((await ui.findAll({ type: 'Text' })) as { text?: string }[])
+    .map(one => (one.text ?? '').replace(/ /g, ' ').trim())
+    .filter(Boolean)
+    .join(' ')
 
 // The folders' chevrons on a surface that paints, as each one's alt names it: `open` or `closed`.
 const chevrons = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) =>
@@ -580,6 +588,87 @@ test('the ⋯ on a file opens its actions; Diff shows what changed, and hides it
   await ui.unmount()
 })
 
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`a press elsewhere in the pane closes a file's actions, and still does its own work (${surface})`, async ($, on) => {
+    engine(on)
+    await $.session.start({ cwd: '/proj', surface, isInteractive: true })
+    await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const more = 'more:touched:/proj/src/client.js'
+
+    // The menu's own rows keep it open.
+    await ui.press({ key: more })
+    await ui.press({ key: 'copy:touched:/proj/src/client.js' })
+    expect(await text(ui, /^Absolute path$/)).toBe('Absolute path')
+
+    // Another control closes it, and acts: the sizes show (README.md's; a changed file shows its line counts).
+    await ui.press({ key: 'sizes' })
+    expect(await text(ui, /^@ Mention$/)).toBeUndefined()
+    expect(await text(ui, /^10 B$/)).toBe('10 B')
+    await ui.unmount()
+  })
+}
+
+test('on a surface that paints, a press anywhere on a menu row or on another file row counts', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const buttons = async () => ((await ui.findAll({ type: 'Button' })) as unknown as { props: { key?: string } }[]).map(one => one.props.key ?? '')
+
+  expect((await buttons()).filter(key => key.startsWith('away:'))).toEqual([])
+  await ui.press({ key: 'more:touched:/proj/src/client.js' })
+
+  // Each menu row is a layer of blank text over the whole row, its label plain text beneath.
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { props: { key?: string; overflow?: string } }[]
+  expect(boxes.find(one => one.props.key === 'item:mention:touched:/proj/src/client.js')?.props.overflow).toBe('hidden')
+  expect(await buttons()).toContain('mention:touched:/proj/src/client.js')
+
+  // A press on a file row away from the menu closes it.
+  expect(await buttons()).toContain('away:tree:/proj/src/client.js')
+  await ui.press({ key: 'away:tree:/proj/README.md' })
+  expect(await text(ui, /^@ Mention$/)).toBeUndefined()
+  expect((await buttons()).filter(key => key.startsWith('away:'))).toEqual([])
+  await ui.unmount()
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`a press on "N changed" opens the tree to every changed file (${surface})`, async ($, on) => {
+    engine(on, { dirty: [' M src/client.js', ' M README.md'], ahead: '0' })
+    await $.session.start({ cwd: '/proj', surface, isInteractive: true })
+
+    const ui = await $.ui.mount({ ...PANE, surface })
+    await settled()
+    expect(await text(ui, /^client\.js$/)).toBeUndefined()
+
+    await ui.press({ key: 'changed' })
+    expect(await text(ui, /^client\.js$/)).toBe('client.js')
+    await ui.unmount()
+  })
+}
+
+test('a diff of several hunks reads line by line, each numbered where it is in the file', async ($, on) => {
+  engine(on, { dirty: [' M src/client.js'], ahead: '0', diff: LOGGED_RETRY_AND_SLOWER_DELAY })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'ms', new_string: 'ms * 2' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'more:touched:/proj/src/client.js' })
+  await ui.press({ key: 'diff:touched:/proj/src/client.js' })
+  const read = await reading(ui)
+
+  // Each hunk opens on its line and the function git names around it.
+  expect(read).toContain('Line 5 · export function retry(fn, times) { 5 } catch (error) { 6 if (i === times - 1) throw error 7 + log(error) 8 } 9 }')
+  // A removed line keeps the number it had, so the line that replaces it is a number on.
+  expect(read).toContain('Line 12 · export function retry(fn, times) { 12 export function delay(ms) { 13 return new Promise(resolve => {')
+  expect(read).toContain('13 − setTimeout(resolve, ms) 14 + setTimeout(resolve, ms * 2) 15 }) 16 }')
+  // git's file header is left to the file's row.
+  expect(read).not.toContain('+++ b/src/client.js')
+  await ui.unmount()
+})
+
 test('the actions on a file put it in the prompt, copy its path, and find it in the tree', async ($, on) => {
   const filled: string[] = []
   const copied: string[] = []
@@ -608,6 +697,7 @@ test('the actions on a file put it in the prompt, copy its path, and find it in 
 
   await ui.press({ key: 'more:tree:/proj/README.md' })
   await ui.press({ key: 'copy:tree:/proj/README.md' })
+  await ui.press({ key: 'copy-rel:tree:/proj/README.md' })
   expect(copied).toEqual(['README.md'])
 
   // src is closed: Show in tree opens it down to the file.
@@ -732,25 +822,60 @@ test('Show in tree works with the tree in a folder, above the project, or in ano
   await ui.unmount()
 })
 
-test('a long touched list shows its newest files and folds the older ones a press away', async ($, on) => {
+test('a long touched list shows its newest files and folds the older ones a press away, on every surface', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
   for (let i = 1; i <= 11; i++) await $.tool.call({ tool: 'Read', file_path: `/proj/notes/n${i}.md` })
 
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const shown = async () => ((await ui.findAll({ type: 'Text', text: /^n\d+\.md$/ })) as unknown as unknown[]).length
+
+    // The newest eight show; the three oldest fold into one row, the count still the whole list's.
+    // The row says how many more, never "earlier": Whole session is what holds the earlier turns.
+    expect(await shown()).toBe(8)
+    expect(await text(ui, /^n11\.md$/)).toBe('n11.md')
+    expect(await text(ui, /^n1\.md$/)).toBeUndefined()
+    expect(await text(ui, /3 more$/)).toMatch(/3 more$/)
+    expect(await text(ui, /Show fewer/)).toBeUndefined()
+    expect(await text(ui, /earlier/i)).toBeUndefined()
+    expect(await text(ui, /^ ?11 files ?$/)).toMatch(/11 files/)
+
+    // Opened, every file shows, and the same row folds them again.
+    await ui.press({ key: 'touched-all' })
+    expect(await shown()).toBe(11)
+    expect(await text(ui, /Show fewer$/)).toMatch(/Show fewer$/)
+    expect(await text(ui, /more$/)).toBeUndefined()
+    expect(await text(ui, /earlier/i)).toBeUndefined()
+
+    await ui.press({ key: 'touched-all' })
+    expect(await shown()).toBe(8)
+    expect(await text(ui, /3 more$/)).toMatch(/3 more$/)
+    await ui.unmount()
+  }
+})
+
+test('with Whole session on, the touched list folds the earlier turns’ files with this one’s', async ($, on) => {
+  engine(on)
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.turn.start({ turnId: 't1', prompt: 'look' } as never)
+  for (let i = 1; i <= 6; i++) await $.tool.call({ tool: 'Read', file_path: `/proj/notes/n${i}.md` })
+  await $.turn.start({ turnId: 't2', prompt: 'again' } as never)
+  for (let i = 7; i <= 12; i++) await $.tool.call({ tool: 'Read', file_path: `/proj/notes/n${i}.md` })
+
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   const shown = async () => ((await ui.findAll({ type: 'Text', text: /^n\d+\.md$/ })) as unknown as unknown[]).length
 
-  // The newest eight show; the three oldest fold into one row, the count still the whole list's.
-  expect(await shown()).toBe(8)
-  expect(await text(ui, /^n11\.md$/)).toBe('n11.md')
-  expect(await text(ui, /^n1\.md$/)).toBeUndefined()
-  expect(await text(ui, /3 more$/)).toMatch(/3 more$/)
-  expect(await text(ui, /earlier/)).toBeUndefined()
-  expect(await text(ui, /^ ?11 files ?$/)).toMatch(/11 files/)
+  // This turn's six fit, with nothing to fold.
+  expect(await shown()).toBe(6)
+  expect(await text(ui, /more$/)).toBeUndefined()
 
-  await ui.press({ key: 'touched-all' })
-  expect(await shown()).toBe(11)
-  await ui.press({ key: 'touched-all' })
+  // The whole session's twelve: the newest eight, and the four before them a press away.
+  await ui.press({ key: 'scope' })
   expect(await shown()).toBe(8)
+  expect(await text(ui, /^n12\.md$/)).toBe('n12.md')
+  expect(await text(ui, /4 more$/)).toMatch(/4 more$/)
+  expect(await text(ui, /earlier/i)).toBeUndefined()
   await ui.unmount()
 })

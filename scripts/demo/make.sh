@@ -1,10 +1,10 @@
 #!/bin/sh
-# Redraw docs/demo.gif from the pane as it is now: record.tsx runs a scripted session against a
-# scratch copy of the mod, capture.mjs draws each frame in headless Chrome, encode.py joins them.
+# Turn a screen recording of the desktop app into docs/demo.gif: compose.py cuts the parts
+# cuts.json names onto a captioned backdrop, gifski joins the frames.
 #
-#     scripts/demo/make.sh
+#     scripts/demo/make.sh <recording.mov>
 #
-# Needs the claude CLI, Node 22+, Google Chrome (or CHROME=<path>) and Python 3 with Pillow.
+# Record with record.py. Needs ffmpeg, gifski and Python 3 with Pillow, on macOS for its fonts.
 set -eu
 
 repo=$(cd "$(dirname "$0")/../.." && pwd)
@@ -12,14 +12,7 @@ demo="$repo/scripts/demo"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-mkdir -p "$work/mod/tests"
-cp -R "$repo/.claude-plugin" "$repo/hooks" "$repo/types" "$work/mod/"
-cp "$demo/record.tsx" "$work/mod/tests/record.test.tsx"
-
-if ! claude plugin test "$work/mod" > "$work/recording.txt" 2>&1; then
-  grep -v '^FRAME \|^TREE ' "$work/recording.txt" >&2
-  exit 1
-fi
-
-node "$demo/capture.mjs" "$work/recording.txt" "$work/frames"
-python3 -I "$demo/encode.py" "$work/frames" "$repo/docs/demo.gif" dither
+python3 -I "$demo/compose.py" "$1" "$demo/cuts.json" "$work"
+fps=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["fps"])' "$demo/cuts.json")
+gifski --quiet --fps "$fps" --quality 90 -o "$repo/docs/demo.gif" "$work"/*.png
+ls -l "$repo/docs/demo.gif"

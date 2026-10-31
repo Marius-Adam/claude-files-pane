@@ -152,4 +152,6 @@ export const dotSvg = (color: string, isLive: boolean) =>
 export const chevronSvg = (isOpen: boolean) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path d="M4.5 2.75L7.75 6L4.5 9.25" fill="none" stroke="${MUTED}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" transform="rotate(${isOpen ? 90 : 0} 6 6)"/></svg>`
 export const BLANK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"/>'
+// A menu's divider: a hairline as wide as the menu lets it be, its own width far past any menu's.
+export const RULE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1" viewBox="0 0 1000 1" preserveAspectRatio="none"><rect width="1000" height="1" fill="${CARD_EDGE}"/></svg>`
 export const CARETS = ['▸', '▾'] as const

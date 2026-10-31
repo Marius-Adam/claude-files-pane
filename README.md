@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" alt="The Files pane following Claude through a task: reading and editing two files with the tree opening to each, running the tests, then committing" width="880">
+  <img src="docs/demo.gif" alt="The Files pane in the Claude desktop app, recorded as Claude fixes a bug in this repository: the files it reads turn purple in the touched list, the two it edits turn orange with their line counts, the card shows the test run, and a file's ⋯ menu offers Copy, Open in an editor and its diff, drawn as numbered rows" width="880">
 </p>
 
 ## Install
@@ -38,26 +38,16 @@ Restart Claude Code and the pane opens beside the chat. `/files` brings it back 
 
 ## Features
 
-- **Live card** of what Claude is doing: its thinking, the command it runs, the file it reads or edits
-- **File tree that follows Claude**: folders open to each file it edits, even in another project
-- **Touched list** of every file Claude read or edited this turn, or the whole session, with lines added and removed
-- **Colours** for what happened to a file: read (purple), edited (orange), not committed (yellow), committed (green)
-- **⋯ on a file**: `@`-mention it in your prompt, copy its path, see its diff under the row, or show it in the tree
-- **Git** branch, commits ahead and changed files; ignored files dimmed
-- **VS Code's icons and search**: type a few letters of a name, best matches first
-- Works in the desktop app and VS Code; the terminal draws the same pane with text for icons
+- **Live card**: Claude's thinking, the command it runs, the file it reads or edits
+- **Tree that follows Claude**: opens to each file it edits, even in another project
+- **Touched list**: files read or edited this turn or session, with lines added and removed
+- **Colours**: read purple, edited orange, uncommitted yellow, committed green
+- **⋯ menu**: `@`-mention, copy path, inline diff, reveal in tree, open in your editor or Finder
+- **Git**: branch, commits ahead, changed files, ignored files dimmed; optional
+- **Search** with VS Code's icons, best matches first
+- Desktop app, VS Code and terminal (text for icons)
 
-**Privacy:** the pane only reads. It lists folders and runs read-only git (`status`, `diff`, `rev-parse`, `ls-files`, `rev-list`, `show`) in your project, and sends nothing anywhere. It writes only to your prompt, when you pick **@ Mention**.
-
-## FAQ
-
-**How do I see which files Claude Code is editing?** The touched list shows the file Claude has in hand now and every file it read or edited, with line counts.
-
-**Can I see a diff of what Claude changed?** Press ⋯ on a changed file, then **Diff**.
-
-**How is it different from `git status`?** It updates as Claude works, and also shows files Claude only read.
-
-**Do I need git?** No. Without a repository the pane has no git line; everything else works.
+**Privacy:** read-only. It lists folders, runs read-only git (`status`, `diff`, `rev-parse`, `ls-files`, `rev-list`, `show`) and checks which editors are installed. It sends nothing anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder**.
 
 ## Update or remove
 
@@ -105,7 +95,7 @@ Claude Code writes its API types into `.claude-plugin/types/` the first time it 
 | `hooks/paths.ts` | Paths and sizes as the pane prints them, and search ranking |
 | `hooks/look.ts` | Colours, type chips and SVGs |
 | `hooks/icons.ts`, `icon-svgs.ts` | Which vscode-icons icon a file or folder gets, and the SVGs (generated) |
-| `scripts/demo/` | Redraws `docs/demo.gif` from the pane's own output |
+| `scripts/demo/` | Turns a screen recording of the pane into `docs/demo.gif` |
 | `tests/` | Tests, against the terminal and desktop surfaces |
 
 To add an icon, map a name, extension or folder in `hooks/icons.ts` to a [vscode-icons](https://icon-sets.iconify.design/vscode-icons/) id, then:
@@ -114,10 +104,10 @@ To add an icon, map a name, extension or folder in `hooks/icons.ts` to a [vscode
 npm pack @iconify-json/vscode-icons && tar xzf iconify-json-vscode-icons-*.tgz && python3 scripts/gen_icons.py package/icons.json hooks/icons.ts hooks/icon-svgs.ts
 ```
 
-To redraw the demo GIF (needs Node 22+, Google Chrome and Python 3 with Pillow):
+The demo GIF is a recording of the desktop app (needs macOS, ffmpeg, gifski and Python 3 with Pillow). Record the window while Claude works, `touch stop` to end it, set the parts to show in `scripts/demo/cuts.json`, then make the GIF:
 
 ```bash
-scripts/demo/make.sh
+python3 scripts/demo/record.py take.mov stop <x,y,w,h> && scripts/demo/make.sh take.mov
 ```
 
 </details>
@@ -132,4 +122,4 @@ scripts/demo/make.sh
 
 ## License
 
-[MIT](LICENSE). Icons from [vscode-icons](https://github.com/vscode-icons/vscode-icons) (MIT). The demo is drawn in the Tokyo Night colours of [claude-skins](https://github.com/hellosverre/claude-skins).
+[MIT](LICENSE). Icons from [vscode-icons](https://github.com/vscode-icons/vscode-icons) (MIT).

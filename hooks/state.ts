@@ -17,6 +17,6 @@ export const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], 
 //   view     'view-3'     the tree's controls: View
 //   git      'git-3'      git's view of the project shown: Git | null
 //   diff     'diff-2'     the diff open under a file's row: Diff | null
-//   menu     'menu-1'     the file whose actions are open: Menu | null
+//   menu     'menu-2'     the file whose actions are open, and their submenu: Menu | null
 //   status   'status-1'   the commit line at the pane's foot: Status | null
 //   tick     (none)       bumped by Refresh, so the tree is listed again

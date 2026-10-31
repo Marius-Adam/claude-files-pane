@@ -40,9 +40,9 @@ export type Status = { verb: 'committing' } | { verb: 'committed'; hash: string 
 // many lines were left out past the pane's limit.
 export type Diff = { path: string; text: string; more: number }
 
-// The file whose actions are open under its row (its ⋯ pressed), absolute, and which list the row
-// is in: the tree, search's matches or the files Claude touched.
-export type Menu = { path: string; where: 'tree' | 'match' | 'touched' }
+// The file whose actions are open under its row (its ⋯ pressed), absolute, which list the row is
+// in (the tree, search's matches or the files Claude touched), and the submenu open in them, if any.
+export type Menu = { path: string; where: 'tree' | 'match' | 'touched'; sub: 'copy' | 'open' | null }
 
 // What the touched list shows: this turn's files, or every file Claude touched this session.
 export type Scope = 'turn' | 'session'
