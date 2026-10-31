@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "files-pane",
-      "description": "A Files pane for Claude Code: what Claude is reading or editing right now, the files it touched this turn, git status, search and a VS Code-style project tree.",
+      "description": "A file explorer for Claude Code: a live, VS Code-style file tree beside the chat showing what Claude reads, edits and commits, with git status and diffs.",
       "source": "./"
     }
   ]
