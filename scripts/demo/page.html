@@ -132,14 +132,22 @@ const build = node => {
         s.borderRadius = key.startsWith('row:') ? '7px' : column ? '13px' : '999px'
       }
       // A card pads itself a little more than one cell, as the desktop does.
-      if (p.borderStyle && column) { s.padding = '14px 16px' }
+      if (p.borderStyle && column && p.position !== 'absolute') { s.padding = '14px 16px' }
+      // A popover: padded in its own steps, and lifted off what it floats over.
+      if (p.position === 'absolute' && p.borderStyle) { s.borderRadius = '10px'; s.boxShadow = '0 6px 18px #0008'; s.whiteSpace = 'nowrap' }
       if (key.startsWith('row:')) { s.paddingTop = s.paddingBottom = '1px'; s.paddingLeft = s.paddingRight = '8px' }
       if (key.startsWith('chip:')) { s.padding = '1px 8px' }
+      // Placed by the sides it names alone, as the desktop does: a box pinned by its bottom keeps
+      // its own height. A cell is 8px across and a line, 20px, down.
       if (p.position === 'absolute') {
         s.position = 'absolute'
-        s.top = `${(p.top ?? 0) * 8}px`; s.left = `${(p.left ?? 0) * 8}px`
+        s.zIndex = 2
+        if (p.top !== undefined) s.top = `${p.top * 20}px`
+        if (p.bottom !== undefined) s.bottom = `${p.bottom * 20}px`
+        if (p.left !== undefined) s.left = `${p.left * 8}px`
         if (p.right !== undefined) s.right = `${p.right * 8}px`
-        if (p.bottom !== undefined) s.bottom = `${p.bottom * 8}px`
+        if (p.top === undefined && p.bottom === undefined) s.top = '0px'
+        if (p.left === undefined && p.right === undefined) s.left = '0px'
       }
       if (p.width !== undefined) s.width = typeof p.width === 'number' ? `${p.width * 8}px` : p.width
       // The tree's indent, a level a cell and a half, as the desktop draws it.
