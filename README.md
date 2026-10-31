@@ -1,3 +1,5 @@
+<a id="readme-top"></a>
+
 <p align="center">
   <img src="docs/logo.svg" alt="" width="72" height="72">
 </p>
@@ -69,7 +71,20 @@ claude plugin uninstall files-pane@marius-adam
 
 ## Contributing
 
-Issues and pull requests are welcome. Run it from a clone, then check it before you push:
+Contributions are welcome. If you have an idea that would make the pane better, fork the repo and open a pull request, or open an issue with the label "enhancement". And if it is useful to you, a star helps others find it.
+
+1. Fork the project
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'feat: add an amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a pull request
+
+<details>
+<summary><b>Develop</b></summary>
+
+<br>
+
+Run it from a clone, then check it before you push:
 
 ```bash
 git clone https://github.com/Marius-Adam/claude-files-pane.git && cd claude-files-pane && claude --plugin-dir .
@@ -78,11 +93,6 @@ git clone https://github.com/Marius-Adam/claude-files-pane.git && cd claude-file
 ```bash
 claude plugin validate . && claude plugin test .
 ```
-
-<details>
-<summary>More for contributors</summary>
-
-<br>
 
 Claude Code writes its API types into `.claude-plugin/types/` the first time it loads the mod; then `npx -p typescript tsc -p . --noEmit` type-checks it. CI runs validation and tests on every push.
 
@@ -111,6 +121,14 @@ scripts/demo/make.sh
 ```
 
 </details>
+
+### Top contributors:
+
+<a href="https://github.com/Marius-Adam/claude-files-pane/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=Marius-Adam/claude-files-pane" alt="contrib.rocks image" />
+</a>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## License
 
