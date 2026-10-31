@@ -42,9 +42,12 @@ function gitDirOf($: EngineInterface, dir: string) {
   let found = gitDirs.get(dir)
 
   if (!found) {
-    found = run($, ['git', 'rev-parse', '--absolute-git-dir'], 3000, dir).then(out =>
-      out && out.exitCode === 0 ? out.stdout.trim() || null : null,
-    )
+    // Kept only once git has answered: a run that timed out or could not start asks again next time.
+    found = run($, ['git', 'rev-parse', '--absolute-git-dir'], 3000, dir).then(out => {
+      if (!out) gitDirs.delete(dir)
+
+      return out && out.exitCode === 0 ? out.stdout.trim() || null : null
+    })
     gitDirs.set(dir, found)
   }
 
@@ -242,8 +245,9 @@ const recount = (hunk: string[]) => {
   return [`@@ -${from},${old} +${to},${next} @@${rest}`, ...body]
 }
 
-// What changed in a file since HEAD, as unified-diff hunks for the pane's Code view; a file git
-// does not track yet, whole, as added lines. Past DIFF_LINES the rest is left out, and counted.
+// What changed in a file since HEAD, as unified-diff hunks with two lines around each change; a
+// file git does not track yet, whole, as added lines. Past DIFF_LINES the rest is left out, and
+// counted.
 // None outside the session's repository: see isTrusted.
 export async function diffOf($: EngineInterface, abs: string): Promise<{ text: string; more: number }> {
   const dir = dirOf(abs)
@@ -253,8 +257,8 @@ export async function diffOf($: EngineInterface, abs: string): Promise<{ text: s
   const tracked = await run($, ['git', 'ls-files', '--error-unmatch', '--', abs], 5000, dir)
   const argv =
     tracked && tracked.exitCode === 0
-      ? ['git', 'diff', '--no-color', '--no-ext-diff', 'HEAD', '--', abs]
-      : ['git', 'diff', '--no-color', '--no-ext-diff', '--no-index', '--', '/dev/null', abs]
+      ? ['git', 'diff', '--no-color', '--no-ext-diff', '-U2', 'HEAD', '--', abs]
+      : ['git', 'diff', '--no-color', '--no-ext-diff', '-U2', '--no-index', '--', '/dev/null', abs]
   // `--no-index` exits 1 when the files differ, which they always do: its output is what counts.
   const out = (await run($, argv, 10000, dir))?.stdout ?? ''
   const all = out.split('\n').map(printable)
