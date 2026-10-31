@@ -3,6 +3,7 @@ import type { EngineInterface, RenderInput } from 'claude-code'
 
 import type { Menu, Touch, View } from '../types'
 import { absOf, cardSince, follow, reveal, toggleDiff } from './activity'
+import { rowsOf } from './diff'
 import { forget, indexFiles, listDir, redraw, refreshGit, SKIP } from './disk'
 import { fileIcon, folderIcon } from './icons'
 import {
@@ -60,9 +61,8 @@ const TOUCHED_ROWS = 8
 export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const elements = $.ui.resolve(e)
     const { Box, Text, Button } = elements
-    // Search needs a text field, the icons an SVG and diffs a Code view, which not every surface draws.
+    // Search needs a text field and the icons an SVG, which not every surface draws.
     const Input = 'Input' in elements ? elements.Input : null
-    const Code = 'Code' in elements ? elements.Code : null
     // The terminal's table answers `in` for Svg too, but draws none: ask the surface.
     const Svg = e.surface !== 'terminal' && 'Svg' in elements ? elements.Svg : null
     const [cur, list, prior, sc, isAll, v, g, open, acts, foot] = await Promise.all([
@@ -193,6 +193,62 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       </Button>
     )
 
+    // A diff as an editor shows one, a row a line: its number in the file, the change's mark, the
+    // line cut at the row's end. Where the surface paints, an added or removed row is tinted;
+    // the terminal colours its text instead. Each hunk opens on the line it starts at and the
+    // function around it, as git names it.
+    const diffView = (text: string, id: string) => {
+      const rows = rowsOf(text)
+      const digits = String(Math.max(...rows.map(row => row.line))).length
+      const number = (n: number | null) => (n === null ? '' : String(n)).padStart(digits, '\u00a0')
+      const MARKS = { add: '+', del: '−', same: '\u00a0' } as const
+
+      return (
+        <Box key={`diffview:${id}`} flexDirection="column" {...rounded(CARD_EDGE)} paddingY="xs" overflow="hidden">
+          {rows.map((row, i) =>
+            row.kind === 'hunk' ? (
+              <Box key={`hunk:${id}:${i}`} gap={1} paddingX={1} marginTop={i === 0 ? undefined : 'xs'} overflow="hidden">
+                <Text mono dimColor size="footnote">
+                  {number(null)}
+                </Text>
+                <Text dimColor size="footnote" wrap="truncate-end">
+                  {row.context ? `Line ${row.line} · ${row.context}` : `Line ${row.line}`}
+                </Text>
+              </Box>
+            ) : (
+              <Box
+                key={`line:${id}:${i}`}
+                gap={1}
+                paddingX={1}
+                overflow="hidden"
+                backgroundColor={isRich && row.kind !== 'same' ? tint(row.kind === 'add' ? ADDED : REMOVED, '1f') : undefined}
+              >
+                <Text mono dimColor size="footnote">
+                  {number(row.line)}
+                </Text>
+                <Text mono size="footnote" color={row.kind === 'add' ? ADDED : row.kind === 'del' ? REMOVED : undefined} dimColor={row.kind === 'same'}>
+                  {MARKS[row.kind]}
+                </Text>
+                <Box flexShrink={1} minWidth={0} overflow="hidden">
+                  <Text
+                    mono
+                    size="footnote"
+                    wrap="truncate-end"
+                    color={isRich || row.kind === 'same' ? undefined : row.kind === 'add' ? ADDED : REMOVED}
+                    dimColor={row.kind === 'same' && !isRich}
+                  >
+                    {/* A line cut at its end draws on one line, where spaces would collapse: its indent
+                        is held in non-breaking ones. */}
+                    {row.text.replace(/^ +/, lead => '\u00a0'.repeat(lead.length)) || '\u00a0'}
+                  </Text>
+                </Box>
+              </Box>
+            ),
+          )}
+        </Box>
+      )
+    }
+
     // A file's row and, while its ⋯ is pressed, its actions in a popover over the row above, at the
     // ⋯'s end: put it in the prompt, copy its path, see its diff (a file git reports as changed) and,
     // from another list, find it in the tree. Then the diff itself, under the row while it is open.
@@ -204,7 +260,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       if (!isActing(where, abs)) return [row]
 
       const name = rel(cwd, abs)
-      const isDiff = canDiff && Code !== null && open?.path === abs
+      const isDiff = canDiff && open?.path === abs
       const id = `${where}:${abs}`
       const act = (key: string, label: string, onPress: (press: { surface: typeof e.surface }) => unknown, isOn = false) => (
         <Button key={`${key}:${id}`} plain dimColor={!isOn} onPress={onPress}>
@@ -237,15 +293,15 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               $.ui.toast(`Copied ${name}`)
               await closeActions()
             })}
-            {canDiff && Code !== null && act('diff', isDiff ? 'Hide diff' : 'Diff', () => toggleDiff($, abs), isDiff)}
+            {canDiff && act('diff', isDiff ? 'Hide diff' : 'Diff', () => toggleDiff($, abs), isDiff)}
             {where !== 'tree' && act('show', 'Show in tree', () => showInTree(abs))}
           </Box>
         </Box>,
-        ...(isDiff && open && Code
+        ...(isDiff && open
           ? [
               <Box key={`diff:${id}`} flexDirection="column" gap="xs" paddingLeft={indent + 1} paddingRight={1}>
                 {open.text ? (
-                  <Code source={open.text} format="diff" path={abs} wrap="truncate-end" />
+                  diffView(open.text, id)
                 ) : (
                   <Text dimColor size="footnote">
                     No changes since the last commit.
@@ -788,7 +844,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               <Text dimColor>Nothing yet</Text>
             </Box>
           )}
-          {/* The older files, folded above the newest; opened, the same row folds them again. */}
+          {/* The older files, folded above the newest; opened, the same row folds them again. It
+              says "more", never "earlier": Whole session already means the earlier turns' files. */}
           {(isFolded ? foldedCount > 0 : shownTouched.length > TOUCHED_ROWS) && (
             <Box key="touched-fold" paddingX={1}>
               <Button
@@ -800,7 +857,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   redraw($)
                 }}
               >
-                <Text size="footnote">{isFolded ? `${CARETS[0]} ${plural(foldedCount, 'earlier file')}` : `${CARETS[1]} Show fewer`}</Text>
+                <Text size="footnote">{isFolded ? `${CARETS[0]} ${foldedCount} more` : `${CARETS[1]} Show fewer`}</Text>
               </Button>
             </Box>
           )}

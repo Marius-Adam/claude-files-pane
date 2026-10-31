@@ -3,6 +3,7 @@ import type { TestBody } from 'claude-code/testing'
 
 import { SVGS } from '../hooks/icon-svgs'
 import { fileIcon, folderIcon } from '../hooks/icons'
+import { rowsOf } from '../hooks/diff'
 import { rank } from '../hooks/paths'
 
 const PANE = {
@@ -550,25 +551,28 @@ test('the ⋯ on a file opens its actions; Diff shows what changed, and hides it
   await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  const code = async () => (await ui.find({ type: 'Code' })) as unknown as { props?: { source?: string; format?: string } } | undefined
+  const view = async () => ui.find({ key: 'diffview:touched:/proj/src/client.js' } as never)
 
   expect(await text(ui, /^@ Mention$/)).toBeUndefined()
 
   await ui.press({ key: 'more:touched:/proj/src/client.js' })
   expect(await text(ui, /^@ Mention$/)).toBe('@ Mention')
-  expect(await code()).toBeUndefined()
+  expect(await view()).toBeUndefined()
   // A popover over the row above, which moves no row.
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { props: { key?: string; position?: string } }[]
   expect(boxes.find(one => one.props.key === 'actions:touched:/proj/src/client.js')?.props.position).toBe('absolute')
 
   await ui.press({ key: 'diff:touched:/proj/src/client.js' })
-  const shown = await code()
-  expect(shown?.props?.format).toBe('diff')
-  // The hunk only: git's header lines are left to the file's row.
-  expect(shown?.props?.source).toBe('@@ -1 +1 @@\n-a\n+b')
+  expect(await view()).toBeDefined()
+  // A row a line, numbered, under the hunk's own: git's header lines are left to the file's row.
+  expect(await text(ui, /^Line 1$/)).toBe('Line 1')
+  expect(await text(ui, /^−$/)).toBe('−')
+  expect(await text(ui, /^a$/)).toBe('a')
+  expect(await text(ui, /^b$/)).toBe('b')
+  expect(await text(ui, /^diff --git/)).toBeUndefined()
 
   await ui.press({ key: 'diff:touched:/proj/src/client.js' })
-  expect(await code()).toBeUndefined()
+  expect(await view()).toBeUndefined()
 
   // The ⋯ again closes the actions.
   await ui.press({ key: 'more:touched:/proj/src/client.js' })
@@ -613,6 +617,18 @@ test('the actions on a file put it in the prompt, copy its path, and find it in 
   await ui.press({ key: 'show:touched:/proj/src/client.js' })
   expect(await names()).toBe(2)
   await ui.unmount()
+})
+
+test('a diff reads as rows numbered where each line is, its shared indent taken off', () => {
+  const text = ['@@ -10,4 +10,4 @@ function retry() {', '       const a = 1', '-    return a', '+    return a + 1', '\\ No newline at end of file', '     }'].join('\n')
+
+  expect(rowsOf(text)).toEqual([
+    { kind: 'hunk', line: 10, context: 'function retry() {' },
+    { kind: 'same', line: 10, text: '  const a = 1' },
+    { kind: 'del', line: 11, text: 'return a' },
+    { kind: 'add', line: 11, text: 'return a + 1' },
+    { kind: 'same', line: 12, text: '}' },
+  ])
 })
 
 test('search ranks a file by its name: the letters in order, together, at a word start', () => {
@@ -728,7 +744,8 @@ test('a long touched list shows its newest files and folds the older ones a pres
   expect(await shown()).toBe(8)
   expect(await text(ui, /^n11\.md$/)).toBe('n11.md')
   expect(await text(ui, /^n1\.md$/)).toBeUndefined()
-  expect(await text(ui, /3 earlier files/)).toMatch(/3 earlier files/)
+  expect(await text(ui, /3 more$/)).toMatch(/3 more$/)
+  expect(await text(ui, /earlier/)).toBeUndefined()
   expect(await text(ui, /^ ?11 files ?$/)).toMatch(/11 files/)
 
   await ui.press({ key: 'touched-all' })
