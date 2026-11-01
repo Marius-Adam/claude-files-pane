@@ -1,13 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { Git } from '../types'
+import type { Git, Mark } from '../types'
 import { dirOf, join, listPath } from './paths'
 import { DEFAULT_VIEW } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
 // uses it, so every file names its own; state.ts lists the tags they must all share.
-const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-3' })
+const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-4' })
 const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-3' })
 
 // What the pane reads of the disk: git's view of the project shown, folder listings and the file
@@ -70,6 +70,18 @@ export async function isTrusted($: EngineInterface, dir = ''): Promise<boolean> 
 // separates too, so the output of a git that ignored `-z` still reads.
 const fieldsOf = (stdout: string | undefined) => (stdout ?? '').split(/\0|\n/)
 
+// The letter for git's two-letter status, `XY` (staged, then in the working tree): a conflict
+// first, since both sides changed it, then what happened to the file, or M for a plain change.
+const markOf = (xy: string): Mark => {
+  if (xy === '??') return 'U'
+  if (xy.includes('U') || xy === 'AA' || xy === 'DD') return 'C'
+  if (xy.includes('D')) return 'D'
+  if (/[RC]/.test(xy)) return 'R'
+  if (xy[0] === 'A') return 'A'
+
+  return 'M'
+}
+
 // The commit HEAD names in `cwd`, short; null where there is none.
 export async function headOf($: EngineInterface, cwd: string) {
   const head = await run($, ['git', 'rev-parse', '--short', 'HEAD'], 5000, cwd)
@@ -120,6 +132,7 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
 
   // `XY path` from the repository's top; a rename or a copy names where it came from next.
   const changed: string[] = []
+  const marks: Record<string, Mark> = {}
   const states = fieldsOf(state?.stdout)
 
   for (let i = 0; i < states.length; i++) {
@@ -130,7 +143,10 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
 
     const path = field.slice(3)
 
-    if (path.startsWith(prefix)) changed.push(path.slice(prefix.length))
+    if (path.startsWith(prefix)) {
+      changed.push(path.slice(prefix.length))
+      marks[path.slice(prefix.length)] = markOf(field.slice(0, 2))
+    }
   }
 
   // `added removed path`, or for a rename `added removed` and then its old and new paths.
@@ -152,6 +168,7 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
     branch: branch.trim(),
     ahead: ahead && ahead.exitCode === 0 ? Number(ahead.stdout.trim()) || 0 : null,
     changed,
+    marks,
     lines,
     ignored: fieldsOf(ignored?.stdout).filter(Boolean).slice(0, 2000),
   }

@@ -9,10 +9,10 @@ import { DEFAULT_VIEW, PANE } from './state'
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
 // uses it, so every file names its own; state.ts lists the tags they must all share.
 const diff = atom({ plugin: 'files-pane', key: 'diff' } as const, null, { shape: 'diff-2' })
-const earlier = atom({ plugin: 'files-pane', key: 'earlier' } as const, [], { shape: 'touched-2' })
+const earlier = atom({ plugin: 'files-pane', key: 'earlier' } as const, [], { shape: 'touched-3' })
 const now = atom({ plugin: 'files-pane', key: 'now' } as const, null, { shape: 'now-3' })
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
-const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-2' })
+const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-3' })
 const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-3' })
 
 // What Claude is doing and what it touched: the card's state, the touched list, the tree following
@@ -87,7 +87,7 @@ export const commitDir = (e: { tool: string }, cwd: string) => {
 
 export const upsert = (list: Touch[], path: string, isEdit: boolean): Touch[] => {
   const old = list.find(one => one.path === path)
-  const touch: Touch = { path, isEdited: isEdit || Boolean(old?.isEdited), isActive: true, isCommitted: false }
+  const touch: Touch = { path, isEdited: isEdit || Boolean(old?.isEdited), isActive: true, isCommitted: false, at: old?.at ?? Date.now() }
 
   // A file keeps its place in the list: files stay in the order Claude first touched them.
   return old ? list.map(one => (one.path === path ? touch : one)) : [...list, touch].slice(-100)
