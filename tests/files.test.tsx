@@ -26,6 +26,10 @@ const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 
 const entry = (name: string, kind: 'file' | 'dir', size = 0) => ({ name, kind, size, mtimeMs: 0, isLink: false })
 
+// The folder the pane listed, as it asked for it. The test engine resolves a listing against the
+// system it runs on, and on Windows `/proj` comes as `D:\proj`.
+const asked = (path: string) => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
+
 // What git answers in the engine below. `dirty` is what it reports as changed (`git status -z`
 // fields), so a test can commit by emptying it; a commit moves HEAD to a1c9e42 unless `isRefused`,
 // as a failing hook would. `diff` is what `git diff` prints for a file.
@@ -340,7 +344,7 @@ const world = (on: Parameters<TestBody>[1], tree: Record<string, ReturnType<type
     return { result: {} }
   })
   on('fs.list', (_, e) => {
-    const path = (e as { path: string }).path
+    const path = asked((e as { path: string }).path)
     listed.push(path)
 
     return { value: tree[path] ?? [] }
@@ -496,6 +500,27 @@ test('a press anywhere on a folder row opens it and closes it', async ($, on) =>
   await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
   await ui.press({ key: 'fold:src' })
+  expect(await text(ui, /^client\.js$/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('VS Code lays nothing over a row: a folder opens from its caret, and its name is text', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'vscode', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+
+  // Its webview places no absolute Box and fills every Button, so a press layer, a shimmer or a
+  // folder's name as a Button would each draw as a filled bar of its own.
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { props: { position?: string } }[]
+  expect(boxes.filter(one => one.props.position === 'absolute')).toEqual([])
+  const keys = ((await ui.findAll({ type: 'Button' })) as unknown as { props: { key?: string } }[]).map(one => one.props.key ?? '')
+  expect(keys.filter(key => /^(fold|dir|away):/.test(key) || key === 'up:row')).toEqual([])
+  expect(await text(ui, /^src$/)).toBe('src')
+
+  await ui.press({ key: 'caret:src' })
+  expect(await text(ui, /^client\.js$/)).toBe('client.js')
+  await ui.press({ key: 'caret:src' })
   expect(await text(ui, /^client\.js$/)).toBeUndefined()
   await ui.unmount()
 })
@@ -901,7 +926,7 @@ test('git reads nothing of a repository other than the session’s', async ($, o
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/proj' }))
   on('tool.call', () => ({ result: {} }))
-  on('fs.list', (_, e) => ({ value: tree[(e as { path: string }).path] ?? [] }))
+  on('fs.list', (_, e) => ({ value: tree[asked((e as { path: string }).path)] ?? [] }))
   on('process.run', (_, e) => {
     const { argv, init } = e as { argv: string[]; init?: { cwd?: string } }
     const cwd = init?.cwd ?? '/proj'

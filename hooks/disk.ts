@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { Git, Mark } from '../types'
-import { dirOf, join, listPath } from './paths'
+import { dirOf, join, listPath, slashed } from './paths'
 import { DEFAULT_VIEW } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
@@ -30,6 +30,15 @@ export function run($: EngineInterface, argv: string[], timeoutMs = 10000, cwd?:
   return $.process.run(line, { timeoutMs, ...(cwd ? { cwd } : {}) }).catch(() => null)
 }
 
+// The session's folder, slashed: every path the pane holds is spelled so (see paths.ts).
+export function sessionDir($: EngineInterface) {
+  return $.session.cwd().then(slashed)
+}
+
+// The folder git names on the first line it prints (`--show-toplevel`, `--absolute-git-dir`),
+// slashed; null when it failed or names none.
+export const gitPath = (out: Awaited<ReturnType<typeof run>>) => (out && out.exitCode === 0 ? slashed(out.stdout.trim()) || null : null)
+
 // A repository's own config can make git run programs of its choosing (core.fsmonitor, a clean
 // filter, a textconv) on `status`, `diff` and `ls-files`, and no flag turns them all off. So
 // those run only in the session's own repository, which the person trusted by working in it and
@@ -46,7 +55,7 @@ function gitDirOf($: EngineInterface, dir: string) {
     found = run($, ['git', 'rev-parse', '--absolute-git-dir'], 3000, dir).then(out => {
       if (!out) gitDirs.delete(dir)
 
-      return out && out.exitCode === 0 ? out.stdout.trim() || null : null
+      return gitPath(out)
     })
     gitDirs.set(dir, found)
   }
@@ -56,7 +65,7 @@ function gitDirOf($: EngineInterface, dir: string) {
 
 // Whether git may run in `dir` (absolute; the session's folder when empty).
 export async function isTrusted($: EngineInterface, dir = ''): Promise<boolean> {
-  const cwd = await $.session.cwd().catch(() => '')
+  const cwd = await sessionDir($).catch(() => '')
 
   if (!cwd) return false
   if (!dir || dir === cwd) return true

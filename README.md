@@ -1,13 +1,17 @@
 <a id="readme-top"></a>
 
+<div align="center">
+
 [![Claude Code mod][mod-shield]][mod-url]
 [![Stars][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 [![MIT license][license-shield]][license-url]
 
+</div>
+
 <br />
 <div align="center">
-  <img src="docs/logo.svg" alt="" width="80" height="80">
+  <img src=".claude-plugin/icon.png" alt="" width="80" height="80">
 
   <h3 align="center">Files pane for Claude Code</h3>
 
@@ -20,6 +24,9 @@
     <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?template=bug_report.yml">Report Bug</a>
     &middot;
     <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?template=feature_request.yml">Request Feature</a>
+    <br />
+    <br />
+    If you find this project helpful, please consider giving it a ⭐!
   </p>
 </div>
 
@@ -57,7 +64,7 @@
 
 ### Prerequisites
 
-[Claude Code](https://claude.com/claude-code): the desktop app, the VS Code extension or the CLI.
+[Claude Code](https://claude.com/claude-code): the desktop app, the VS Code extension or the CLI, on macOS, Linux or Windows. On Windows, **Open in** offers VS Code, Cursor, Windsurf, Zed and Sublime Text when their command is on the PATH, and no JetBrains IDE.
 
 ### Installation
 
@@ -91,9 +98,9 @@ claude plugin uninstall files-pane@marius-adam
 
 - `/files` brings the pane back if you close it.
 - Colours tell you what happened to a file: read **purple**, edited **orange**, uncommitted **yellow**, committed **green**.
-- A file's **⋯** menu can `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor or Finder.
+- A file's **⋯** menu can `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor, Finder or Explorer.
 
-**Privacy:** the pane is read-only. It lists folders, runs read-only git (`status`, `diff`, `rev-parse`, `ls-files`, `rev-list`, `show`) and checks which editors are installed. It sends nothing anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder**.
+**Privacy:** the pane is read-only. It lists folders, runs read-only git (`status`, `diff`, `rev-parse`, `ls-files`, `rev-list`, `show`) and checks which editors are installed (on Windows, with `where` and by reading the editor's `.cmd` script). It sends nothing anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -120,6 +127,8 @@ claude plugin validate . && claude plugin test .
 ```
 
 Claude Code writes its API types into `.claude-plugin/types/` the first time it loads the mod; then `npx -p typescript tsc -p . --noEmit` type-checks it. CI runs validation and tests on every push.
+
+Pull requests go to `staging`. A release is one pull request from `staging` to `main` that bumps the version in `.claude-plugin/plugin.json`, merged with a merge commit, since the marketplace installs from `main`.
 
 | Path | What's there |
 | :-- | :-- |
