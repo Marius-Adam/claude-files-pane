@@ -1,0 +1,41 @@
+name: Feature request
+description: An idea that would make the pane more useful
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you're trying to do
+      description: The situation, and what gets in your way today.
+      placeholder: When Claude edits files in a second project, I can't tell which project each touched file belongs to.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like the pane to do
+      placeholder: Group the touched list by project, with the project's name as a heading.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other ways around it, in the pane or outside it.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Part of the pane
+      multiple: true
+      options:
+        - Live card
+        - File tree
+        - Touched list
+        - Git line (branch, commits, changes)
+        - Search
+        - A file's ⋯ menu
+        - Toolbar
+        - Something new
