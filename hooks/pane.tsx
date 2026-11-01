@@ -233,6 +233,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           backgroundColor={state === 'on' ? tint(FOLDER, '1f') : undefined}
           paddingX={0}
           paddingY={0}
+          flexShrink={0}
           hover={{ backgroundColor: state === 'on' ? tint(FOLDER, '2e') : HOVER }}
         >
           {button}
@@ -563,6 +564,21 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Text>
       )
 
+    // A folder's name in a pill: unlike a count, it can be any length, so in a narrow header it gives
+    // way, cut with an ellipsis.
+    const place = (name: string) =>
+      isRich ? (
+        <Box {...rounded(tint(MUTED, '4d'))} backgroundColor={tint(MUTED, '1f')} paddingX={1} paddingY={0} flexShrink={1} minWidth={0} overflow="hidden">
+          <Text color={MUTED} size="footnote" weight="semibold" wrap="truncate-end">
+            {name}
+          </Text>
+        </Box>
+      ) : (
+        <Text dimColor size="caption" wrap="truncate-end">
+          {name}
+        </Text>
+      )
+
     const counts = (path: string) => {
       const pair = g?.lines[path]
 
@@ -883,16 +899,17 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const totals = Object.values(g?.lines ?? {}).reduce<[number, number]>(([a, d], [x, y]) => [a + x, d + y], [0, 0])
 
     // A section's head: its name in small caps and, beside it, a quiet count or place, or controls.
-    // In a narrow pane the name gives way, never the aside.
+    // In a narrow pane the name gives way first: its weight is far above the aside's, which shrinks
+    // only once the name is gone, and then only where it holds a place.
     const head = (title: string, aside: string | JSX.Element) => (
       <Box justifyContent="space-between" alignItems="center" gap={1} paddingX={1}>
-        <Box flexShrink={1} minWidth={0} overflow="hidden">
+        <Box flexShrink={1000} minWidth={0} overflow="hidden">
           <Text dimColor weight="bold" size="caption" wrap="truncate-end">
             {title}
           </Text>
           {pressAway(`head:${title}`)}
         </Box>
-        <Box flexShrink={0}>
+        <Box flexShrink={1} minWidth={0}>
           {typeof aside !== 'string' ? aside : isRich ? pill(aside, MUTED) : <Text dimColor size="caption">{aside}</Text>}
         </Box>
       </Box>
@@ -1124,12 +1141,12 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             query ? (
               plural(matches.length, 'file')
             ) : v.dir !== '' || v.root !== '' ? (
-              <Box gap={xs} alignItems="center">
+              <Box gap={xs} alignItems="center" flexShrink={1} minWidth={0}>
                 {tool('home', '⌂ Project', () => setView({ root: '', dir: '', expanded: [] }))}
-                {isRich ? pill(v.dir ? base(v.dir) : project, MUTED) : <Text dimColor size="caption">{v.dir ? base(v.dir) : project}</Text>}
+                {place(v.dir ? base(v.dir) : project)}
               </Box>
             ) : (
-              project
+              place(project)
             ),
           )}
           <Box flexDirection="column" marginTop={xs}>
