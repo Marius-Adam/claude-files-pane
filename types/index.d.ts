@@ -8,8 +8,9 @@ export type Now =
   | { verb: 'done'; edited: string[]; read: string[] }
   | { verb: 'committed'; hash: string; files: string[] }
 
-// A file Claude touched this turn, its path relative to the working directory.
-export type Touch = { path: string; isEdited: boolean; isActive: boolean; isCommitted: boolean }
+// A file Claude touched this turn, its path relative to the working directory, and when Claude
+// first touched it (milliseconds since the epoch).
+export type Touch = { path: string; isEdited: boolean; isActive: boolean; isCommitted: boolean; at: number }
 
 // The pane's own controls: search text, the project shown (`root`, absolute; empty for the
 // session's folder), the folder shown under it, open folders and toggles.
@@ -23,15 +24,20 @@ export type View = {
 }
 
 // The branch, how far it is ahead of its upstream (null without one), the paths git reports as
-// changed and their added and removed line counts, and what it ignores (a folder as `dir/`),
-// all relative to the working directory.
+// changed with the letter each one gets and their added and removed line counts, and what it
+// ignores (a folder as `dir/`), all relative to the working directory.
 export type Git = {
   branch: string
   ahead: number | null
   changed: string[]
+  marks: Record<string, Mark>
   lines: Record<string, [number, number]>
   ignored: string[]
 }
+
+// What git sees in a changed file, as VS Code's explorer letters it: modified, added, deleted,
+// renamed, untracked, or in conflict.
+export type Mark = 'M' | 'A' | 'D' | 'R' | 'U' | 'C'
 
 // The line at the foot of the pane while Claude commits, and the commit it made.
 export type Status = { verb: 'committing' } | { verb: 'committed'; hash: string }

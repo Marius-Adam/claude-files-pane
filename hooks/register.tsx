@@ -27,7 +27,7 @@ import { PANE } from './state'
 const diff = atom({ plugin: 'files-pane', key: 'diff' } as const, null, { shape: 'diff-2' })
 const menu = atom({ plugin: 'files-pane', key: 'menu' } as const, null, { shape: 'menu-2' })
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
-const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-2' })
+const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-3' })
 
 // The mod's hooks: what Claude does reaches the pane through these. The pane is drawn in pane.tsx;
 // what it reads of the disk is in disk.ts, and what it makes of Claude's work in activity.ts.

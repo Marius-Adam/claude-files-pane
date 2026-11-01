@@ -4,7 +4,8 @@ import type { TestBody } from 'claude-code/testing'
 import { SVGS } from '../hooks/icon-svgs'
 import { fileIcon, folderIcon } from '../hooks/icons'
 import { rowsOf } from '../hooks/diff'
-import { rank } from '../hooks/paths'
+import { EDIT } from '../hooks/look'
+import { rank, timeOf } from '../hooks/paths'
 import { LOGGED_RETRY_AND_SLOWER_DELAY } from './git-diffs'
 
 const PANE = {
@@ -738,6 +739,41 @@ test('typing in the prompt closes a file’s actions', async ($, on) => {
 })
 
 for (const surface of ['terminal', 'desktop'] as const) {
+  // The name says what Claude did with a file and the letter what git sees in it, so neither hides
+  // the other: an edited file Claude has not committed is orange and marked M.
+  test(`a changed file carries git's letter beside Claude's color (${surface})`, async ($, on) => {
+    engine(on, { dirty: [' M src/client.js', '?? .env', 'A  README.md'], ahead: '0' })
+    await $.session.start({ cwd: '/proj', surface, isInteractive: true })
+    await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+    const ui = await $.ui.mount({ ...PANE, surface })
+    await settled()
+
+    const names = (await ui.findAll({ type: 'Text', text: /^client\.js$/ })) as unknown as { props: { color?: string } }[]
+    const marks = async (letter: string) => ((await ui.findAll({ type: 'Text', text: new RegExp(`^${letter}$`) })) as unknown as unknown[]).length
+
+    // In the touched list and in the tree.
+    expect(names.map(one => one.props.color)).toEqual([EDIT, EDIT])
+    expect(await marks('M')).toBe(2)
+    expect(await marks('U')).toBe(1)
+    expect(await marks('A')).toBe(1)
+    await ui.unmount()
+  })
+
+  test(`the touched list says when Claude first touched each file (${surface})`, async ($, on) => {
+    engine(on)
+    await $.session.start({ cwd: '/proj', surface, isInteractive: true })
+
+    const before = timeOf(Date.now())
+    await $.tool.call({ tool: 'Read', file_path: '/proj/README.md' })
+    const after = timeOf(Date.now())
+
+    const ui = await $.ui.mount({ ...PANE, surface })
+
+    expect([before, after]).toContain(await text(ui, /^\d\d:\d\d$/))
+    await ui.unmount()
+  })
+
   test(`a press on "N changed" opens the tree to every changed file (${surface})`, async ($, on) => {
     engine(on, { dirty: [' M src/client.js', ' M README.md'], ahead: '0' })
     await $.session.start({ cwd: '/proj', surface, isInteractive: true })

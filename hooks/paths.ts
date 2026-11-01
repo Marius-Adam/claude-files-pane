@@ -8,6 +8,13 @@ export const rel = (cwd: string, path: string) => (path.startsWith(`${cwd}/`) ? 
 export const where = (dir: string) => dir.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~')
 export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
+// A moment as the pane prints it: the hour and minute on the person's clock.
+export const timeOf = (ms: number) => {
+  const at = new Date(ms)
+
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+}
+
 export const sizeOf = (bytes: number) => {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`

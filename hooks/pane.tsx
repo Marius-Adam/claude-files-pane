@@ -35,21 +35,21 @@ import {
   TOOL,
   WRITE,
 } from './look'
-import { base, closedAbove, dirOf, isUnder, join, listPath, parentOf, plural, rank, rel, sizeOf, where } from './paths'
+import { base, closedAbove, dirOf, isUnder, join, listPath, parentOf, plural, rank, rel, sizeOf, timeOf, where } from './paths'
 import { DEFAULT_VIEW, PANE } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
 // uses it, so every file names its own; state.ts lists the tags they must all share.
 const diff = atom({ plugin: 'files-pane', key: 'diff' } as const, null, { shape: 'diff-2' })
-const earlier = atom({ plugin: 'files-pane', key: 'earlier' } as const, [], { shape: 'touched-2' })
-const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-3' })
+const earlier = atom({ plugin: 'files-pane', key: 'earlier' } as const, [], { shape: 'touched-3' })
+const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-4' })
 const menu = atom({ plugin: 'files-pane', key: 'menu' } as const, null, { shape: 'menu-2' })
 const now = atom({ plugin: 'files-pane', key: 'now' } as const, null, { shape: 'now-3' })
 const scope = atom({ plugin: 'files-pane', key: 'scope' } as const, 'turn', { shape: 'scope-1' })
 const isTouchedAll = atom({ plugin: 'files-pane', key: 'isTouchedAll' } as const, false)
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
 const tick = atom({ plugin: 'files-pane', key: 'tick' } as const, 0)
-const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-2' })
+const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-3' })
 const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-3' })
 
 const TREE_ROWS = 300
@@ -563,6 +563,19 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       )
     }
 
+    // The letter git gives a changed file (M, A, D, R, U, C), as the project shown spells its path.
+    // The name takes Claude's color while Claude has the file, so this is what still says git has
+    // the file changed.
+    const mark = (path: string | null) => {
+      const letter = path === null ? undefined : g?.marks[path]
+
+      return letter ? (
+        <Text color={DIRTY} size="footnote" weight="semibold">
+          {letter}
+        </Text>
+      ) : null
+    }
+
     // The accent a touched file carries: green once committed, orange once edited, purple once read.
     const accentOf = (one: Touch) => (one.isCommitted ? DONE : one.isEdited ? EDIT : READ)
 
@@ -816,6 +829,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               </Box>
               <Box flexShrink={0} gap={1} alignItems="center">
                 {right}
+                {mark(path)}
                 {more('tree', join(home, path))}
               </Box>
             </Box>
@@ -1069,6 +1083,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 </Box>
                 <Box gap={1} alignItems="center" flexShrink={0}>
                   {one.isEdited && !one.isCommitted && counts(one.path)}
+                  {mark(key)}
+                  <Text dimColor size="footnote" tabular>
+                    {timeOf(one.at)}
+                  </Text>
                   {more('touched', abs)}
                 </Box>
               </Box>,
