@@ -218,8 +218,8 @@ test('on Windows, the ⋯ copies paths with \\, shows the file in Explorer, and 
 })
 
 // Editors as their installers leave them on Windows. VS Code's `bin` holds `code` for Git Bash and
-// `code.cmd`, which runs the app's own program as Node on the script that opens the app; another
-// editor's script may sit further from its program. Zed's command is a program. A JetBrains
+// `code.cmd`, which runs the app's own program as Node on the script that opens the app, in a folder
+// named for the build; another editor's script may sit further from its program. Zed's command is a program. A JetBrains
 // Toolbox script starts the IDE itself, which a launch would wait on.
 const VS_CODE = 'C:\\Users\\someone\\AppData\\Local\\Programs\\Microsoft VS Code'
 const CURSOR = 'C:\\Users\\someone\\AppData\\Local\\Programs\\cursor'
@@ -237,7 +237,7 @@ const INSTALLED: Installed = {
     idea: `${TOOLBOX}\r\n`,
   },
   files: {
-    [`${VS_CODE}\\bin\\code.cmd`.replace(/\\/g, '/')]: shim('..\\Code.exe', '..\\resources\\app\\out\\cli.js'),
+    [`${VS_CODE}\\bin\\code.cmd`.replace(/\\/g, '/')]: shim('..\\Code.exe', '..\\2c33b50b16\\resources\\app\\out\\cli.js'),
     [`${CURSOR}\\resources\\app\\bin\\cursor.cmd`.replace(/\\/g, '/')]: shim('..\\..\\..\\Cursor.exe', '..\\out\\cli.js'),
     [TOOLBOX.replace(/\\/g, '/')]: '@echo off\r\nstart "" "C:\\Program Files\\JetBrains\\IntelliJ IDEA\\bin\\idea64.exe" %*\r\n',
   },
@@ -270,7 +270,7 @@ test('on Windows, Open in lists the editors on the PATH it can start, and starts
   // VS Code runs as its code.cmd runs it: its program as Node, on the script that opens the app.
   await ui.press(press('open-code'))
   expect(ran).toContainEqual({
-    argv: [`${VS_CODE}\\Code.exe`, `${VS_CODE}\\resources\\app\\out\\cli.js`, 'C:\\proj\\src\\client.js'],
+    argv: [`${VS_CODE}\\Code.exe`, `${VS_CODE}\\2c33b50b16\\resources\\app\\out\\cli.js`, 'C:\\proj\\src\\client.js'],
     cwd: undefined,
     env: { ELECTRON_RUN_AS_NODE: '1' },
   })
