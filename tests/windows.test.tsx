@@ -34,7 +34,8 @@ const TREE: Record<string, ReturnType<typeof entry>[]> = {
 
 // Where the editors are on the PATH, as `where` lists them (one a line, CRLF), by command; and the
 // files on the disk the pane may read, by path, as the editors' installers leave them.
-type Installed = { where?: Record<string, string>; files?: Record<string, string> }
+// `isPowerShellMissing` makes PowerShell fail to start.
+type Installed = { where?: Record<string, string>; files?: Record<string, string>; isPowerShellMissing?: boolean }
 
 // The engine on a Windows host: the session in C:\proj, a repository on branch main with
 // src/client.js changed, and another at D:\work\other, and the editors `installed`. Explorer exits
@@ -85,6 +86,8 @@ const engine = (on: Parameters<TestBody>[1], installed: Installed = {}) => {
     const cwd = init?.cwd ?? 'C:\\proj'
     ran.push({ argv, cwd: init?.cwd, env: init?.env })
 
+    if (argv[0] === 'powershell' && installed.isPowerShellMissing) throw new Error('ENOENT')
+
     if (argv[0] === 'where') {
       const found = installed.where?.[argv[1]!.replace(/^\$PATH:/, '')]
 
@@ -111,6 +114,13 @@ const engine = (on: Parameters<TestBody>[1], installed: Installed = {}) => {
 
   return { ran, listed, copied, toasts }
 }
+
+// The script a PowerShell run was handed as `-EncodedCommand`: UTF-16LE in base64.
+const scriptOf = (argv: string[]) => atob(argv[argv.indexOf('-EncodedCommand') + 1] ?? '').replace(/\0/g, '')
+
+// What Show in Explorer ran: the path PowerShell was handed, and the script it ran.
+const revealed = (ran: { argv: string[]; env?: Record<string, string> }[]) =>
+  ran.filter(one => one.argv[0] === 'powershell').map(one => ({ path: one.env?.FILES_PANE_PATH, script: scriptOf(one.argv) }))
 
 // Lets what the pane started without waiting (a read of git) run to its end.
 const settled = async () => {
@@ -206,7 +216,13 @@ test('on Windows, the ⋯ copies paths with \\, shows the file in Explorer, and 
   expect(await shows(ui, 'Open in')).toBe(false)
   expect(await shows(ui, 'Show in Finder')).toBe(false)
   await ui.press(press('folder'))
-  expect(ran.map(one => one.argv)).toContainEqual(['explorer', '/select,', 'C:\\proj\\src\\client.js'])
+  // PowerShell starts Explorer on the file and brings its window forward. The path comes in a
+  // variable, so no file name can change the script.
+  const [reveal] = revealed(ran)
+  expect(reveal?.path).toBe('C:\\proj\\src\\client.js')
+  expect(reveal?.script).toContain("Start-Process explorer.exe -ArgumentList '/select,'")
+  expect(reveal?.script).toContain('SetForegroundWindow')
+  expect(reveal?.script).not.toContain('client.js')
   // Explorer's exit 1 is no failure.
   expect(toasts.filter(one => one.startsWith('Could not'))).toEqual([])
   // Windows is known from the session's folder: no uname, no which. Editors are looked for on the
@@ -217,8 +233,8 @@ test('on Windows, the ⋯ copies paths with \\, shows the file in Explorer, and 
   await ui.unmount()
 })
 
-test('on Windows, Show in Explorer hands a path with a space to Explorer apart from its switch', async ($, on) => {
-  const { ran } = engine(on)
+test('on Windows, Show in Explorer hands a path with a space whole, and Explorer alone where PowerShell cannot start', async ($, on) => {
+  const { ran, toasts } = engine(on, { isPowerShellMissing: true })
   await $.session.start({ cwd: 'C:\\proj', surface: 'desktop', isInteractive: true })
   await $.tool.call({ tool: 'Read', file_path: 'C:\\proj\\my notes\\plan.md' })
 
@@ -227,8 +243,10 @@ test('on Windows, Show in Explorer hands a path with a space to Explorer apart f
 
   await ui.press({ key: `more:touched:${FILE}` })
   await ui.press({ key: `folder:touched:${FILE}` })
+  expect(revealed(ran).map(one => one.path)).toEqual(['C:\\proj\\my notes\\plan.md'])
   // As one argument, `"/select,C:\proj\my notes\plan.md"`, Explorer would open Documents instead.
   expect(ran.map(one => one.argv)).toContainEqual(['explorer', '/select,', 'C:\\proj\\my notes\\plan.md'])
+  expect(toasts.filter(one => one.startsWith('Could not'))).toEqual([])
   await ui.unmount()
 })
 
