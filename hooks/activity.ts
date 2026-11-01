@@ -2,8 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { Now, Touch } from '../types'
-import { diffOf, forget, headOf, redraw, refreshGit, run } from './disk'
-import { clip, closedAbove, dirOf, firstLine, isUnder, join, rel } from './paths'
+import { diffOf, forget, gitPath, headOf, redraw, refreshGit, run } from './disk'
+import { clip, closedAbove, dirOf, firstLine, fromShell, isAbs, isUnder, join, rel, slashed } from './paths'
 import { DEFAULT_VIEW, PANE } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
@@ -23,12 +23,15 @@ const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 const COMMIT = /\bgit\s+(?:-C\s+(\S+)\s+)?commit\b/
 const CD = /(?:^|[;&|]\s*)cd\s+(\S+)/g
 
-// The file a tool call reads or edits, if it is one of those.
+// The file a tool call reads or edits, if it is one of those, slashed.
 export const touchOf = (e: { tool: string }) => {
   const input = e as unknown as Record<string, unknown>
-  const path = typeof input.file_path === 'string' ? input.file_path : input.notebook_path
+  const named = typeof input.file_path === 'string' ? input.file_path : input.notebook_path
 
-  if (typeof path !== 'string') return null
+  if (typeof named !== 'string') return null
+
+  const path = slashed(named)
+
   if (EDITS.has(e.tool)) return { path, isEdit: true }
   if (READS.has(e.tool)) return { path, isEdit: false }
 
@@ -39,7 +42,7 @@ export const touchOf = (e: { tool: string }) => {
 export const describe = (e: { tool: string }, cwd: string): { title: string; detail: string } => {
   const input = e as unknown as Record<string, unknown>
   const text = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '')
-  const where = (path: string) => (path ? rel(cwd, path) : '')
+  const where = (path: string) => (path ? rel(cwd, slashed(path)) : '')
 
   switch (e.tool) {
     case 'Bash':
@@ -68,6 +71,7 @@ export const describe = (e: { tool: string }, cwd: string): { title: string; det
 
 // The folder a `git commit` runs in, absolute: its `-C` folder, else the last `cd` before it, else
 // the session's. Null when the call is no commit. A folder from `~` cannot be told: the session's.
+// On Windows the command runs in Git Bash, which may name a folder `/c/proj`.
 export const commitDir = (e: { tool: string }, cwd: string) => {
   const command = (e as unknown as Record<string, unknown>).command
 
@@ -78,11 +82,13 @@ export const commitDir = (e: { tool: string }, cwd: string) => {
   if (!match) return null
 
   const named = match[1] ?? [...command.slice(0, match.index).matchAll(CD)].pop()?.[1]
-  const dir = named?.replace(/^(['"])(.*)\1$/, '$2')
+  const unquoted = named?.replace(/^(['"])(.*)\1$/, '$2')
 
-  if (!dir || dir.startsWith('~')) return cwd
+  if (!unquoted || unquoted.startsWith('~')) return cwd
 
-  return dir.startsWith('/') ? dir : join(cwd, dir)
+  const dir = fromShell(cwd, slashed(unquoted))
+
+  return isAbs(dir) ? dir : join(cwd, dir)
 }
 
 export const upsert = (list: Touch[], path: string, isEdit: boolean): Touch[] => {
@@ -193,8 +199,7 @@ export async function follow($: EngineInterface, cwd: string, abs: string, isEdi
   if (!abs.startsWith(`${shown}/`)) {
     if (abs.startsWith(`${cwd}/`)) root = ''
     else {
-      const top = await run($, ['git', 'rev-parse', '--show-toplevel'], 3000, dirOf(abs))
-      root = top && top.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : dirOf(abs)
+      root = gitPath(await run($, ['git', 'rev-parse', '--show-toplevel'], 3000, dirOf(abs))) ?? dirOf(abs)
       if (root === cwd) root = ''
     }
   }
@@ -225,7 +230,7 @@ export function reveal($: EngineInterface, path: string) {
 }
 
 // A file as an absolute path: the touched list spells one relative to the session's folder.
-export const absOf = (cwd: string, path: string) => (path.startsWith('/') ? path : join(cwd, path))
+export const absOf = (cwd: string, path: string) => (isAbs(path) ? path : join(cwd, path))
 
 // Opens the diff of a file (absolute), or closes it when it is the one open.
 export async function toggleDiff($: EngineInterface, path: string) {
@@ -269,7 +274,7 @@ export async function afterCommit($: EngineInterface, cwd: string, repo: string,
     run($, ['git', 'rev-parse', '--show-toplevel'], 5000, repo),
     run($, ['git', 'show', '--name-only', '-z', '--format=', 'HEAD'], 5000, repo),
   ])
-  const root = (top && top.exitCode === 0 && top.stdout.trim()) || repo
+  const root = gitPath(top) ?? repo
   const files = (shown?.stdout ?? '').split(/\0|\n/).filter(Boolean)
   const inCommit = new Set(files.map(file => join(root, file)))
   const mark = (list: Touch[]) => list.map(one => (inCommit.has(absOf(cwd, one.path)) ? { ...one, isActive: false, isCommitted: true } : one))

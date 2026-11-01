@@ -1,11 +1,32 @@
 import type { View } from '../types'
 
+// A path as the pane spells it on every system: folders split by `/`. Windows hands the pane
+// `C:\proj\src` where git prints `C:/proj/src`, so a Windows path (from a drive, or a `\\` share)
+// takes `/` and a capital drive letter as it comes in, and stays one spelling inside. Any other
+// path is left alone: on macOS and Linux a `\` is part of a name.
+export const slashed = (path: string) =>
+  /^(?:[A-Za-z]:[\\/]|\\\\)/.test(path) ? path.replace(/\\/g, '/').replace(/^[a-z]:/, drive => drive.toUpperCase()) : path
+
+// Whether a path, as slashed, is a Windows one: from a drive, or a share.
+export const isWindowsPath = (path: string) => /^(?:[A-Z]:\/|\/\/)/.test(path)
+
+// The way Windows spells a slashed path, for what a person copies or Explorer opens.
+export const backslashed = (path: string) => path.replace(/\//g, '\\')
+
+// Whether a path, as slashed, is absolute: from `/`, a drive or a share.
+export const isAbs = (path: string) => path.startsWith('/') || isWindowsPath(path)
+
+// A folder a command names in Git Bash, `/c/proj`, as Windows spells it, `C:/proj`. Only where the
+// session's own folder says the host is Windows: on macOS and Linux `/c` is just a folder.
+export const fromShell = (cwd: string, dir: string) =>
+  isWindowsPath(cwd) ? dir.replace(/^\/([A-Za-z])(?=\/|$)/, (_, drive: string) => `${drive.toUpperCase()}:`) : dir
+
 export const base = (path: string) => path.slice(path.lastIndexOf('/') + 1)
 export const dirOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
 export const join = (dir: string, name: string) => (dir ? `${dir}/${name}` : name)
 export const rel = (cwd: string, path: string) => (path.startsWith(`${cwd}/`) ? path.slice(cwd.length + 1) : path)
 // A folder as the pane prints it: a file outside the project gets its home folder as `~`.
-export const where = (dir: string) => dir.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~')
+export const where = (dir: string) => dir.replace(/^(?:\/(?:Users|home)|[A-Z]:\/Users)\/[^/]+(?=\/|$)/, '~')
 export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
 // A moment as the pane prints it: the hour and minute on the person's clock.
@@ -50,7 +71,7 @@ export const tailOf = (text: string, max = 140) => {
 // The folders above `path` (relative to the project shown) that the tree has not opened, from the
 // folder shown down. A file outside the project has none.
 export const closedAbove = (old: View, path: string) => {
-  if (path.startsWith('/') || path.startsWith('../')) return []
+  if (isAbs(path) || path.startsWith('../')) return []
 
   const parts = path.split('/').slice(0, -1)
 

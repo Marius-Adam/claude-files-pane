@@ -4,8 +4,8 @@ import type { EngineInterface, RenderInput, Space } from 'claude-code'
 import type { Menu, Touch, View } from '../types'
 import { absOf, cardSince, follow, reveal, toggleDiff } from './activity'
 import { rowsOf } from './diff'
-import { forget, indexFiles, listDir, redraw, refreshGit, SKIP } from './disk'
-import { hostOf, openIn, showInFinder } from './editors'
+import { forget, indexFiles, listDir, redraw, refreshGit, sessionDir, SKIP } from './disk'
+import { folderApp, hostOf, openIn, showInFolder } from './editors'
 import { fileIcon, folderIcon } from './icons'
 import {
   ADDED,
@@ -35,7 +35,7 @@ import {
   TOOL,
   WRITE,
 } from './look'
-import { base, closedAbove, dirOf, isUnder, join, listPath, parentOf, plural, rank, rel, sizeOf, timeOf, where } from './paths'
+import { backslashed, base, closedAbove, dirOf, isUnder, isWindowsPath, join, listPath, parentOf, plural, rank, rel, sizeOf, timeOf, where } from './paths'
 import { DEFAULT_VIEW, PANE } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
@@ -97,7 +97,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       read($, status),
     ])
     await read($, tick)
-    const cwd = await $.session.cwd()
+    const cwd = await sessionDir($)
     // The editors a file's ⋯ offers, looked for once, as the session starts.
     const host = acts ? await hostOf($) : null
     // The project the tree shows: the session's folder, or the one it followed Claude to.
@@ -310,7 +310,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // A file's row and, while its ⋯ is pressed, its actions in a popover over the row above, at the
     // ⋯'s end, laid out as the app's own menus are: put it in the prompt and copy its path; see its
     // diff (a file git reports as changed) and, from another list, find it in the tree; open it in
-    // an editor installed on the host, or in Finder. Then the diff itself, under the row while open.
+    // an editor installed on the host, or in Finder or Explorer. Then the diff itself, under the row
+    // while open.
     // The popover hangs off a Box around the row, as the row clips what it holds; it floats over the
     // rows before it, which an absolute Box is painted over, and moves none of them.
     // While a menu is open, a press on any file's row closes it, as a click away does a native menu's,
@@ -334,11 +335,13 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const sub = acts?.sub ?? null
       // What runs on the host is offered only where the person sits at it: not from a phone.
       const editors = e.surface === 'mobile' ? [] : (host?.editors ?? [])
-      const hasFinder = e.surface !== 'mobile' && host?.isMac === true
+      const folder = e.surface !== 'mobile' && host ? folderApp(host) : null
       const mention = async () => {
         await $.prompt.fill({ text: `@${name.includes(' ') ? `"${name}"` : name} `, mode: 'insert' }).catch(() => {})
         await closeActions()
       }
+      // A path copied as the host spells it: with `\` on Windows.
+      const asHost = (path: string) => (isWindowsPath(cwd) ? backslashed(path) : path)
       const copy = (text: string) => async (press: { surface: typeof e.surface }) => {
         await $.ui.copy({ text, surface: press.surface }).catch(() => {})
         $.ui.toast(`Copied ${text}`)
@@ -367,8 +370,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           { key: 'copy', label: 'Copy', onPress: () => toggleSub('copy'), isSub: true, isOpen: sub === 'copy' },
           ...(sub === 'copy'
             ? [
-                { key: 'copy-abs', label: 'Absolute path', onPress: copy(abs), depth: 1 },
-                { key: 'copy-rel', label: 'Relative path', onPress: copy(name), depth: 1 },
+                { key: 'copy-abs', label: 'Absolute path', onPress: copy(asHost(abs)), depth: 1 },
+                { key: 'copy-rel', label: 'Relative path', onPress: copy(asHost(name)), depth: 1 },
                 { key: 'copy-name', label: 'Filename', onPress: copy(base(abs)), depth: 1 },
               ]
             : []),
@@ -382,7 +385,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           ...(sub === 'open' && host
             ? editors.map(editor => ({ key: `open-${editor.cli}`, label: editor.name, onPress: launch(editor.name, () => openIn($, host, editor, abs)), depth: 1 }))
             : []),
-          ...(hasFinder ? [{ key: 'finder', label: 'Show in Finder', onPress: launch('Finder', () => showInFinder($, abs)) }] : []),
+          ...(folder && host ? [{ key: 'folder', label: `Show in ${folder}`, onPress: launch(folder, () => showInFolder($, host, abs)) }] : []),
         ],
       ].filter(group => group.length > 0)
       // In cells: the longest row, its indent and chevron, and each row's padding either side.

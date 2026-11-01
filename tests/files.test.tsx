@@ -26,6 +26,10 @@ const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 
 const entry = (name: string, kind: 'file' | 'dir', size = 0) => ({ name, kind, size, mtimeMs: 0, isLink: false })
 
+// The folder the pane listed, as it asked for it. The test engine resolves a listing against the
+// system it runs on, and on Windows `/proj` comes as `D:\proj`.
+const asked = (path: string) => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
+
 // What git answers in the engine below. `dirty` is what it reports as changed (`git status -z`
 // fields), so a test can commit by emptying it; a commit moves HEAD to a1c9e42 unless `isRefused`,
 // as a failing hook would. `diff` is what `git diff` prints for a file.
@@ -340,7 +344,7 @@ const world = (on: Parameters<TestBody>[1], tree: Record<string, ReturnType<type
     return { result: {} }
   })
   on('fs.list', (_, e) => {
-    const path = (e as { path: string }).path
+    const path = asked((e as { path: string }).path)
     listed.push(path)
 
     return { value: tree[path] ?? [] }
@@ -922,7 +926,7 @@ test('git reads nothing of a repository other than the session’s', async ($, o
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/proj' }))
   on('tool.call', () => ({ result: {} }))
-  on('fs.list', (_, e) => ({ value: tree[(e as { path: string }).path] ?? [] }))
+  on('fs.list', (_, e) => ({ value: tree[asked((e as { path: string }).path)] ?? [] }))
   on('process.run', (_, e) => {
     const { argv, init } = e as { argv: string[]; init?: { cwd?: string } }
     const cwd = init?.cwd ?? '/proj'
