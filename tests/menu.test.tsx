@@ -68,14 +68,15 @@ type Ui = { findAll: (q: { type: string }) => Promise<unknown> }
 const texts = async (ui: Ui) => ((await ui.findAll({ type: 'Text' })) as { text?: string }[]).map(one => (one.text ?? '').trim())
 const shows = async (ui: Ui, label: string) => (await texts(ui)).includes(label)
 
-const start = async ($: Parameters<TestBody>[0], surface: 'terminal' | 'desktop' | 'mobile' = 'desktop') => {
+const start = async ($: Parameters<TestBody>[0], surface: 'terminal' | 'desktop' | 'vscode' | 'mobile' = 'desktop') => {
   await $.session.start({ cwd: '/proj', surface, isInteractive: true })
   await $.tool.call({ tool: 'Read', file_path: FILE })
 
   return $.ui.mount({ ...PANE, surface })
 }
 
-for (const surface of ['terminal', 'desktop'] as const) {
+// VS Code lays no press over a menu's row, so its items are Buttons there, as on the terminal.
+for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
   test(`Copy offers the absolute path, the relative path and the filename, and copies the one pressed (${surface})`, async ($, on) => {
     const { copied, toasts } = engine(on, { system: 'Darwin', installed: [] })
     const ui = await start($, surface)
