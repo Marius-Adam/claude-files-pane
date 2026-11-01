@@ -40,22 +40,30 @@ const $ = {
   fs: { read: async (path: string) => readFileSync(path, 'utf8') },
 }
 
-mkdirSync(PROJECT, { recursive: true })
-writeFileSync(FILE, 'export const x = 1\n')
+// Top-level await needs ESM, and with no package.json tsx compiles this as CommonJS.
+async function main() {
+  mkdirSync(PROJECT, { recursive: true })
+  writeFileSync(FILE, 'export const x = 1\n')
 
-const host = await hostOf($ as never)
-console.log('host:', JSON.stringify(host, null, 2))
+  const host = await hostOf($ as never)
+  console.log('host:', JSON.stringify(host, null, 2))
 
-const code = host.editors.find(one => one.cli === 'code')
-if (!code) throw new Error('VS Code not found')
+  const code = host.editors.find(one => one.cli === 'code')
+  if (!code) throw new Error('VS Code not found')
 
-const opened = await openIn($ as never, host, code, FILE.replace(/\\/g, '/'))
-console.log('openIn:', opened)
-if (!opened) throw new Error('openIn failed')
+  const opened = await openIn($ as never, host, code, FILE.replace(/\\/g, '/'))
+  console.log('openIn:', opened)
+  if (!opened) throw new Error('openIn failed')
 
-// The app VS Code's script started, and the file it was handed, whole.
-await new Promise(done => setTimeout(done, 5000))
-const ps = await run(['powershell', '-NoProfile', '-Command', "Get-CimInstance Win32_Process -Filter \"Name='Code.exe'\" | ForEach-Object { $_.CommandLine }"])
-console.log(ps.stdout)
-if (!ps.stdout.includes(FILE)) throw new Error('No Code.exe was handed the file whole')
-console.log('VS Code started with the file whole')
+  // The app VS Code's script started, and the file it was handed, whole.
+  await new Promise(done => setTimeout(done, 5000))
+  const ps = await run(['powershell', '-NoProfile', '-Command', "Get-CimInstance Win32_Process -Filter \"Name='Code.exe'\" | ForEach-Object { $_.CommandLine }"])
+  console.log(ps.stdout)
+  if (!ps.stdout.includes(FILE)) throw new Error('No Code.exe was handed the file whole')
+  console.log('VS Code started with the file whole')
+}
+
+main().catch(error => {
+  console.error(error)
+  process.exit(1)
+})
