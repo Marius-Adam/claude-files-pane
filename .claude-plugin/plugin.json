@@ -1,6 +1,6 @@
 {
   "name": "files-pane",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "A file explorer for Claude Code: a live, VS Code-style file tree beside the chat showing what Claude reads, edits and commits, with git status and diffs.",
   "author": { "name": "Marius Adam" },
   "homepage": "https://github.com/Marius-Adam/claude-files-pane",
