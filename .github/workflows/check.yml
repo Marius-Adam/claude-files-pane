@@ -10,7 +10,7 @@ on:
   pull_request:
 
 jobs:
-  check:
+  test:
     strategy:
       # One system failing still lets the others finish, so a run says which ones break.
       fail-fast: false
@@ -28,6 +28,19 @@ jobs:
         run: claude plugin validate .
       - name: Run the tests
         run: claude plugin test .
+
+  # The rulesets on staging and main require a check named `check`: this one reports the matrix's
+  # result under that name, so a system added to or dropped from the matrix needs no ruleset change.
+  # `always()` keeps it from being skipped when a system fails, as a skipped check counts as passed.
+  check:
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pass only when every system passed
+        env:
+          RESULT: ${{ needs.test.result }}
+        run: '[ "$RESULT" = success ]'
 
   # A release is one pull request from staging to main, so a pull request into main from any other
   # branch, or from a fork's staging, fails here. Main's ruleset requires this check.
