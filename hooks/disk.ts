@@ -71,13 +71,14 @@ export async function isTrusted($: EngineInterface, dir = ''): Promise<boolean> 
 const fieldsOf = (stdout: string | undefined) => (stdout ?? '').split(/\0|\n/)
 
 // The letter for git's two-letter status, `XY` (staged, then in the working tree): a conflict
-// first, since both sides changed it, then what happened to the file, or M for a plain change.
+// first, since both sides changed it, then what happened to the file, or M for a plain change. A
+// file added with `git add -N` is ` A`: its A is on the working tree's side.
 const markOf = (xy: string): Mark => {
   if (xy === '??') return 'U'
   if (xy.includes('U') || xy === 'AA' || xy === 'DD') return 'C'
   if (xy.includes('D')) return 'D'
   if (/[RC]/.test(xy)) return 'R'
-  if (xy[0] === 'A') return 'A'
+  if (xy.includes('A')) return 'A'
 
   return 'M'
 }
