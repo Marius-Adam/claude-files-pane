@@ -17,9 +17,9 @@
     <br />
     <a href="#about-the-project">View Demo</a>
     &middot;
-    <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?labels=bug">Report Bug</a>
+    <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?template=bug_report.yml">Report Bug</a>
     &middot;
-    <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?labels=enhancement">Request Feature</a>
+    <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?template=feature_request.yml">Request Feature</a>
   </p>
 </div>
 
@@ -99,7 +99,7 @@ claude plugin uninstall files-pane@marius-adam
 
 ## Contributing
 
-Contributions are welcome. Fork the repo and open a pull request, or open an issue with the label "enhancement". If the pane is useful to you, a star helps others find it.
+Contributions are welcome. Fork the repo and open a pull request, or open a [feature request](https://github.com/Marius-Adam/claude-files-pane/issues/new?template=feature_request.yml). If the pane is useful to you, a star helps others find it.
 
 1. Fork the project
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)

@@ -1,0 +1,117 @@
+name: Bug report
+description: Something in the pane is wrong, missing or broken
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. The more of this you fill in, the faster it gets fixed.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw in the pane.
+      placeholder: After Claude edited two files, the touched list showed only one of them.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      placeholder: Both files listed in orange, with their line counts.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you asked Claude, or what you clicked, from a fresh session if you can.
+      placeholder: |
+        1. Open a session in a git repository
+        2. Ask Claude to edit `a.ts` and `b.ts`
+        3. Look at the touched list
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Part of the pane
+      multiple: true
+      options:
+        - Live card
+        - File tree
+        - Touched list
+        - Git line (branch, commits, changes)
+        - Search
+        - A file's ⋯ menu
+        - Toolbar
+        - The pane doesn't open
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where you run Claude Code
+      options:
+        - Desktop app
+        - VS Code extension
+        - Terminal
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+      placeholder: 2.1.316 (Claude Code)
+    validations:
+      required: true
+
+  - type: input
+    id: pane-version
+    attributes:
+      label: files-pane version
+      description: The `Version` line under files-pane in `claude plugin list`.
+      placeholder: 0.6.2
+    validations:
+      required: true
+
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots or recording
+      description: Drag images or a short video here. Blur anything private.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Details about the project that might matter, such as a very large repository, a monorepo, git worktrees, submodules or symlinks.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues and this isn't one of them.
+          required: true
+        - label: It still happens on the latest version (`claude plugin update files-pane@marius-adam`).
+          required: true
