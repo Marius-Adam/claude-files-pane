@@ -20,7 +20,7 @@ const PANE = {
 
 const entry = (name: string, kind: 'file' | 'dir') => ({ name, kind, size: 0, mtimeMs: 0, isLink: false })
 
-// The folder the pane listed, as it asked for it. The test engine resolves a listing against the
+// The path the pane listed or read, as it asked for it. The test engine resolves a path against the
 // system it runs on: off Windows `C:/proj` is relative, and comes after the folder the tests run in.
 const asked = (path: string) => path.replace(/^.*?(?=[A-Za-z]:[\\/])/, '').replace(/\\/g, '/')
 
@@ -32,12 +32,17 @@ const TREE: Record<string, ReturnType<typeof entry>[]> = {
   'D:/work/other/lib': [entry('util.ts', 'file')],
 }
 
+// Where the editors are on the PATH, as `where` lists them (one a line, CRLF), by command; and the
+// files on the disk the pane may read, by path, as the editors' installers leave them.
+type Installed = { where?: Record<string, string>; files?: Record<string, string> }
+
 // The engine on a Windows host: the session in C:\proj, a repository on branch main with
-// src/client.js changed, and another at D:\work\other. Explorer exits 1, as it does when it opens a
-// folder. A commit moves HEAD to a1c9e42. `ran` collects every command with the folder it runs in; `listed` every folder listed;
-// `copied` and `toasts` what the pane copied and told the person.
-const engine = (on: Parameters<TestBody>[1]) => {
-  const ran: { argv: string[]; cwd?: string }[] = []
+// src/client.js changed, and another at D:\work\other, and the editors `installed`. Explorer exits
+// 1, as it does when it opens a folder. A commit moves HEAD to a1c9e42. `ran` collects every command
+// with the folder it runs in and the variables it sets; `listed` every folder listed; `copied` and
+// `toasts` what the pane copied and told the person.
+const engine = (on: Parameters<TestBody>[1], installed: Installed = {}) => {
+  const ran: { argv: string[]; cwd?: string; env?: Record<string, string> }[] = []
   const listed: string[] = []
   const copied: string[] = []
   const toasts: string[] = []
@@ -58,6 +63,13 @@ const engine = (on: Parameters<TestBody>[1]) => {
 
     return { value: TREE[path] ?? [] }
   })
+  on('fs.read', (_, e) => {
+    const text = installed.files?.[asked((e as { path: string }).path)]
+
+    if (text === undefined) throw new Error('ENOENT')
+
+    return { value: text }
+  })
   on('ui.copy', (_, e) => {
     copied.push((e as { text: string }).text)
 
@@ -69,9 +81,16 @@ const engine = (on: Parameters<TestBody>[1]) => {
     return { value: undefined }
   })
   on('process.run', (_, e) => {
-    const { argv, init } = e as { argv: string[]; init?: { cwd?: string } }
+    const { argv, init } = e as { argv: string[]; init?: { cwd?: string; env?: Record<string, string> } }
     const cwd = init?.cwd ?? 'C:\\proj'
-    ran.push({ argv, cwd: init?.cwd })
+    ran.push({ argv, cwd: init?.cwd, env: init?.env })
+
+    if (argv[0] === 'where') {
+      const found = installed.where?.[argv[1]!.replace(/^\$PATH:/, '')]
+
+      return { value: { exitCode: found ? 0 : 1, stdout: found ?? '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+
     const repo = cwd.startsWith('D:/work/other') ? 'D:/work/other' : 'C:/proj'
     const stdout = argv.includes('--absolute-git-dir')
       ? `${repo}/.git\n`
@@ -167,7 +186,7 @@ test('on Windows, a commit made from Git Bash with -C /c/… marks the project�
   expect(ran.some(one => one.argv.includes('show') && one.cwd === 'C:/proj')).toBe(true)
 })
 
-test('on Windows, the ⋯ copies paths with \\, shows the file in Explorer, and looks for no editor', async ($, on) => {
+test('on Windows, the ⋯ copies paths with \\, shows the file in Explorer, and has no Open in with no editor on the PATH', async ($, on) => {
   const { ran, copied, toasts } = engine(on)
   await $.session.start({ cwd: 'C:\\proj', surface: 'desktop', isInteractive: true })
   await $.tool.call({ tool: 'Read', file_path: 'C:\\proj\\src\\client.js' })
@@ -190,7 +209,95 @@ test('on Windows, the ⋯ copies paths with \\, shows the file in Explorer, and 
   expect(ran.map(one => one.argv)).toContainEqual(['explorer', '/select,C:\\proj\\src\\client.js'])
   // Explorer's exit 1 is no failure.
   expect(toasts.filter(one => one.startsWith('Could not'))).toEqual([])
-  // Windows is known from the session's folder: no uname, no which.
+  // Windows is known from the session's folder: no uname, no which. Editors are looked for on the
+  // PATH only, never in the project.
   expect(ran.some(one => one.argv[0] === 'uname' || one.argv[0] === 'which')).toBe(false)
+  expect(ran.filter(one => one.argv[0] === 'where').map(one => one.argv[1])).toContain('$PATH:code')
+  expect(ran.every(one => one.argv[0] !== 'where' || one.argv[1]!.startsWith('$PATH:'))).toBe(true)
+  await ui.unmount()
+})
+
+// Editors as their installers leave them on Windows. VS Code's `bin` holds `code` for Git Bash and
+// `code.cmd`, which runs the app's own program as Node on the script that opens the app; another
+// editor's script may sit further from its program. Zed's command is a program. A JetBrains
+// Toolbox script starts the IDE itself, which a launch would wait on.
+const VS_CODE = 'C:\\Users\\someone\\AppData\\Local\\Programs\\Microsoft VS Code'
+const CURSOR = 'C:\\Users\\someone\\AppData\\Local\\Programs\\cursor'
+const ZED = 'C:\\Users\\someone\\AppData\\Local\\Programs\\Zed\\bin\\zed.exe'
+const TOOLBOX = 'C:\\Users\\someone\\AppData\\Local\\JetBrains\\Toolbox\\scripts\\idea.cmd'
+
+const shim = (exe: string, cli: string) =>
+  ['@echo off', 'setlocal', 'set VSCODE_DEV=', 'set ELECTRON_RUN_AS_NODE=1', `"%~dp0${exe}" "%~dp0${cli}" %*`, 'IF %ERRORLEVEL% NEQ 0 EXIT /b %ERRORLEVEL%', 'endlocal', ''].join('\r\n')
+
+const INSTALLED: Installed = {
+  where: {
+    code: `${VS_CODE}\\bin\\code\r\n${VS_CODE}\\bin\\code.cmd\r\n`,
+    cursor: `${CURSOR}\\resources\\app\\bin\\cursor\r\n${CURSOR}\\resources\\app\\bin\\cursor.cmd\r\n`,
+    zed: `${ZED}\r\n`,
+    idea: `${TOOLBOX}\r\n`,
+  },
+  files: {
+    [`${VS_CODE}\\bin\\code.cmd`.replace(/\\/g, '/')]: shim('..\\Code.exe', '..\\resources\\app\\out\\cli.js'),
+    [`${CURSOR}\\resources\\app\\bin\\cursor.cmd`.replace(/\\/g, '/')]: shim('..\\..\\..\\Cursor.exe', '..\\out\\cli.js'),
+    [TOOLBOX.replace(/\\/g, '/')]: '@echo off\r\nstart "" "C:\\Program Files\\JetBrains\\IntelliJ IDEA\\bin\\idea64.exe" %*\r\n',
+  },
+}
+
+// Opens the ⋯ of `file` (as the pane spells it), then its Open in.
+const openIn = async (ui: { press: (key: { key: string }) => Promise<unknown> }, file: string) => {
+  const press = (action: string) => ({ key: `${action}:touched:${file}` })
+  await ui.press(press('more'))
+  await ui.press(press('open'))
+
+  return press
+}
+
+test('on Windows, Open in lists the editors on the PATH it can start, and starts each with no shell', async ($, on) => {
+  const { ran, toasts } = engine(on, INSTALLED)
+  await $.session.start({ cwd: 'C:\\proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Read', file_path: 'C:\\proj\\src\\client.js' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const press = await openIn(ui, 'C:/proj/src/client.js')
+
+  expect(await shows(ui, 'VS Code')).toBe(true)
+  expect(await shows(ui, 'Cursor')).toBe(true)
+  expect(await shows(ui, 'Zed')).toBe(true)
+  // Toolbox's script is no VS Code one, and Sublime Text is not on the PATH.
+  expect(await shows(ui, 'IntelliJ IDEA')).toBe(false)
+  expect(await shows(ui, 'Sublime Text')).toBe(false)
+
+  // VS Code runs as its code.cmd runs it: its program as Node, on the script that opens the app.
+  await ui.press(press('open-code'))
+  expect(ran).toContainEqual({
+    argv: [`${VS_CODE}\\Code.exe`, `${VS_CODE}\\resources\\app\\out\\cli.js`, 'C:\\proj\\src\\client.js'],
+    cwd: undefined,
+    env: { ELECTRON_RUN_AS_NODE: '1' },
+  })
+
+  // Zed's command is a program, so it runs as it is.
+  await openIn(ui, 'C:/proj/src/client.js')
+  await ui.press(press('open-zed'))
+  expect(ran).toContainEqual({ argv: [ZED, 'C:\\proj\\src\\client.js'], cwd: undefined, env: undefined })
+  expect(toasts.filter(one => one.startsWith('Could not'))).toEqual([])
+  // Nothing goes through cmd.
+  expect(ran.some(one => /^cmd(?:\.exe)?$/i.test(one.argv[0]!) || /\.cmd$/i.test(one.argv[0]!))).toBe(false)
+  await ui.unmount()
+})
+
+test('on Windows, a file named with spaces, &, ^ and % reaches the editor whole, as one argument', async ($, on) => {
+  const { ran } = engine(on, INSTALLED)
+  await $.session.start({ cwd: 'C:\\proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Read', file_path: 'C:\\proj\\100% done & a^b.ts' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const press = await openIn(ui, 'C:/proj/100% done & a^b.ts')
+
+  await ui.press(press('open-cursor'))
+  expect(ran).toContainEqual({
+    argv: [`${CURSOR}\\Cursor.exe`, `${CURSOR}\\resources\\app\\out\\cli.js`, 'C:\\proj\\100% done & a^b.ts'],
+    cwd: undefined,
+    env: { ELECTRON_RUN_AS_NODE: '1' },
+  })
   await ui.unmount()
 })
