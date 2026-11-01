@@ -1,13 +1,17 @@
 <a id="readme-top"></a>
 
+<div align="center">
+
 [![Claude Code mod][mod-shield]][mod-url]
 [![Stars][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 [![MIT license][license-shield]][license-url]
 
+</div>
+
 <br />
 <div align="center">
-  <img src="docs/logo.svg" alt="" width="80" height="80">
+  <img src=".claude-plugin/icon.png" alt="" width="80" height="80">
 
   <h3 align="center">Files pane for Claude Code</h3>
 
@@ -20,6 +24,9 @@
     <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?template=bug_report.yml">Report Bug</a>
     &middot;
     <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?template=feature_request.yml">Request Feature</a>
+    <br />
+    <br />
+    If you find this project helpful, please consider giving it a ⭐!
   </p>
 </div>
 
