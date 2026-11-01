@@ -36,6 +36,7 @@
     <li><a href="#about-the-project">About The Project</a></li>
     <li><a href="#getting-started">Getting Started</a></li>
     <li><a href="#usage">Usage</a></li>
+    <li><a href="#troubleshooting">Troubleshooting</a></li>
     <li><a href="#contributing">Contributing</a></li>
     <li><a href="#license">License</a></li>
     <li><a href="#support">Support</a></li>
@@ -64,7 +65,7 @@
 
 ### Prerequisites
 
-[Claude Code](https://claude.com/claude-code): the desktop app, the VS Code extension or the CLI, on macOS, Linux or Windows. On Windows, **Open in** offers VS Code, Cursor, Windsurf, Zed and Sublime Text when their command is on the PATH, and no JetBrains IDE.
+[Claude Code](https://claude.com/claude-code) **2.1.299 or newer**: the desktop app, the VS Code extension or the CLI, on macOS, Linux or Windows. On an older one the mod does not load, and no pane appears (see [Troubleshooting](#troubleshooting)). On Windows, **Open in** offers VS Code, Cursor, Windsurf, Zed and Sublime Text when their command is on the PATH, and no JetBrains IDE.
 
 ### Installation
 
@@ -101,6 +102,32 @@ claude plugin uninstall files-pane@marius-adam
 - A file's **⋯** menu can `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor, Finder or Explorer.
 
 **Privacy:** the pane is read-only. It lists folders, runs read-only git (`status`, `diff`, `rev-parse`, `ls-files`, `rev-list`, `show`) and checks which editors are installed (on Windows, with `where` and by reading the editor's `.cmd` script). It sends nothing anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows).
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Troubleshooting
+
+**I closed the pane.** Type `/files` in a session to bring it back.
+
+**No pane ever appears, and there is no `/files`.** The mod did not load. Check both:
+
+```bash
+claude --version
+```
+
+```bash
+claude plugin list
+```
+
+Files pane needs Claude Code 2.1.299 or newer, and should be listed as `files-pane@marius-adam` with its status enabled. In the terminal, update with `claude update`; the desktop app and the VS Code extension update with the app and the extension. Then restart Claude Code.
+
+**The tree has no git colours or branch.** Git is read only in the repository the session started in. A project the tree follows Claude into shows no git.
+
+**Open in is missing, or lacks my editor.** On macOS the editor's app must be installed, and on Linux its command (`code`, `cursor`, `windsurf`, `zed`, `subl`) must be on the PATH. On Windows, see [Prerequisites](#prerequisites). The pane looks once a session, so restart Claude Code after installing one.
+
+**Something else is wrong.** [Report a bug](https://github.com/Marius-Adam/claude-files-pane/issues/new?template=bug_report.yml) with the output of both commands above.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
