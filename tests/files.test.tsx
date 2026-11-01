@@ -266,8 +266,35 @@ test('the terminal shows a chip for a file type, and a folder outside the projec
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect(await text(ui, /^ MD $/)).toBe(' MD ')
+  expect(await text(ui, /^MD +$/)).toBe('MD  ')
   expect(await text(ui, /^~\/notes$/)).toBe('~/notes')
+  await ui.unmount()
+})
+
+// The terminal draws a color's alpha byte as if it were opaque: a tint there is a solid block in the
+// color of the text on it, which hides the text. So no color the terminal is handed has one.
+test('the terminal gets no see-through color, and its type chips share one width', async ($, on) => {
+  engine(on, { dirty: [' M src/client.js'], ahead: '2' })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Read', file_path: '/proj/README.md' })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await settled()
+
+  const seeThrough = (props: unknown): string[] =>
+    Object.entries(props && typeof props === 'object' ? props : {}).flatMap(([key, value]) =>
+      typeof value === 'string' ? (/color$/i.test(key) && /^#[0-9a-f]{8}$/i.test(value) ? [`${key} ${value}`] : []) : seeThrough(value),
+    )
+  const drawn = (await ui.findAll({})) as unknown as { type: string; props: Record<string, unknown>; text: string }[]
+
+  expect(drawn.flatMap(one => seeThrough(one.props))).toEqual([])
+
+  // README.md's, .env's and client.js's: the names after them start in one column.
+  const chips = drawn.filter(one => one.type === 'Text' && one.props.mono && one.props.weight === 'semibold').map(one => one.text)
+
+  expect(chips.length).toBeGreaterThanOrEqual(3)
+  expect(new Set(chips.map(one => one.length)).size).toBe(1)
   await ui.unmount()
 })
 

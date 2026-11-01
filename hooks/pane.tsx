@@ -184,20 +184,24 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const isRich = Svg !== null
     // A bordered Box is what the desktop rounds; a clear border keeps the corner without a line.
     const rounded = (color = CLEAR) => (isRich ? ({ borderStyle: 'round', borderColor: color } as const) : {})
+    // The terminal draws a color's alpha as if it were opaque: a tint there is a solid block in the
+    // color of the text on it, which hides the text. So it gets no tint, and its edges are gray.
+    const edge = isRich ? CARD_EDGE : MUTED
 
     // Every Svg names itself in `alt`: the desktop drops one whose alt is empty.
     const icon = (source: string, alt: string, glyph: string, color: string, size = 18) =>
       Svg ? <Svg source={source} alt={alt} width={size} height={size} /> : <Text color={color}>{glyph}</Text>
 
-    // A file's icon: its vscode-icons SVG, or on the terminal a chip naming its type.
+    // A file's icon: its vscode-icons SVG, or on the terminal a chip naming its type. Every chip is
+    // as wide as the longest label (`HTML`), so the names after them start in one column.
     const chip = (name: string) => {
       if (Svg) return <Svg source={fileIcon(name)} alt={name} width={16} height={16} />
 
       const [label, color] = kindOf(name)
 
       return (
-        <Text color={color} backgroundColor={tint(color, '22')} mono size="caption" weight="semibold">
-          {` ${label} `}
+        <Text color={color} mono size="caption" weight="semibold">
+          {label.padEnd(4)}
         </Text>
       )
     }
@@ -411,7 +415,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Svg source={RULE_SVG} alt="divider" height={1} />
           </Box>
         ) : (
-          <Text key={`rule:${i}:${id}`} color={CARD_EDGE}>
+          <Text key={`rule:${i}:${id}`} color={edge}>
             {'─'.repeat(width)}
           </Text>
         )
@@ -537,12 +541,12 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
       ) : press ? (
         <Button key={press.key} plain onPress={press.onPress}>
-          <Text color={color} backgroundColor={tint(color, '2e')} size="footnote" weight="semibold">
+          <Text color={color} size="footnote" weight="semibold">
             {` ${label} `}
           </Text>
         </Button>
       ) : (
-        <Text color={color} backgroundColor={tint(color, '2e')} size="footnote" weight="semibold">
+        <Text color={color} size="footnote" weight="semibold">
           {` ${label} `}
         </Text>
       )
@@ -771,7 +775,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           const isDirty = changed.has(path)
           const accent = touch ? accentOf(touch) : isDirty ? DIRTY : undefined
           // The row's tint: strong while Claude has the file or just committed it, faint once it let go.
-          const background = touch ? tint(accentOf(touch), touch.isActive || touch.isCommitted ? '2e' : '14') : undefined
+          const background = touch && isRich ? tint(accentOf(touch), touch.isActive || touch.isCommitted ? '2e' : '14') : undefined
           // No pill for what Claude is doing with the file: the row's tint and shimmer say it.
           const right = (() => {
             if (isDirty && g?.lines[path]) return counts(path)
@@ -877,7 +881,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Box
           flexDirection="column"
           borderStyle="round"
-          borderColor={isIdle ? CARD_EDGE : tint(card.color, '66')}
+          borderColor={isIdle ? edge : isRich ? tint(card.color, '66') : card.color}
           backgroundColor={isRich ? (isIdle ? CARD : tint(card.color, '14')) : undefined}
           overflow="hidden"
           gap={1}
@@ -985,7 +989,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {tool('hidden', 'Dotfiles', () => setView({ showHidden: !v.showHidden }), v.showHidden ? 'on' : 'off', '◌')}
         </Box>
 
-        <Box flexDirection="column" borderStyle="round" borderColor={CARD_EDGE} backgroundColor={isRich ? CARD : undefined} gap="xs">
+        <Box flexDirection="column" borderStyle="round" borderColor={edge} backgroundColor={isRich ? CARD : undefined} gap="xs">
           {head(
             'CLAUDE TOUCHED',
             <Box gap="xs" alignItems="center">
@@ -1032,7 +1036,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             const key = keyOf(one.path)
             const canDiff = g && key !== null ? changed.has(key) : one.isEdited && !one.isCommitted
             // As in the tree: the tint and shimmer say what Claude did with the file, the name takes its color.
-            const background = tint(accentOf(one), one.isActive || one.isCommitted ? '2e' : '14')
+            const background = isRich ? tint(accentOf(one), one.isActive || one.isCommitted ? '2e' : '14') : undefined
 
             return withActions(
               <Box
@@ -1046,7 +1050,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 paddingRight={0}
                 paddingY={0}
                 overflow="hidden"
-                hover={{ backgroundColor: background }}
+                hover={{ backgroundColor: background ?? HOVER }}
               >
                 {one.isActive && shimmer(accentOf(one))}
                 {/* One line: the name keeps its room, the folder gives way from its start. */}
@@ -1075,7 +1079,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           })}
         </Box>
 
-        <Box flexDirection="column" borderStyle="round" borderColor={CARD_EDGE} backgroundColor={isRich ? CARD : undefined} gap={0}>
+        <Box flexDirection="column" borderStyle="round" borderColor={edge} backgroundColor={isRich ? CARD : undefined} gap={0}>
           {head(
             query ? 'MATCHES' : 'ALL FILES',
             query ? (
