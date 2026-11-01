@@ -110,14 +110,43 @@ export function openIn($: EngineInterface, host: Host, editor: Editor, abs: stri
 // file manager to ask.
 export const folderApp = (host: Host) => (host.system === 'mac' ? 'Finder' : host.system === 'windows' ? 'Explorer' : null)
 
-// The file selected in a window of its folder: Finder's, or Explorer's. Explorer takes the path
-// only with `\`, and exits 1 whether or not it opened one, so it counts as done once it starts.
-// `/select,` and the path go as two arguments: a path with a space is quoted on Explorer's command
-// line, and Explorer reads `"/select,C:\a b\f"`, quoted whole, as no switch and opens Documents.
+// Explorer started by the pane opens behind the app the person is in: Windows keeps a background
+// process from bringing a window forward. So PowerShell starts Explorer, finds its new window among
+// the shell's by its folder, and brings that window forward. The path comes in FILES_PANE_PATH,
+// never in the script, and is made whole first: Explorer opens the wrong folder for a path with
+// `..`. `/select,` and the path go as two arguments: a path with a space is quoted on Explorer's
+// command line, and Explorer reads `"/select,C:\a b\f"`, quoted whole, as no switch.
+const REVEAL = `
+$path = [IO.Path]::GetFullPath($env:FILES_PANE_PATH)
+$folder = [IO.Path]::GetDirectoryName($path)
+$shell = New-Object -ComObject Shell.Application
+$inFolder = { @($shell.Windows() | Where-Object { try { $_.Document.Folder.Self.Path -eq $folder } catch { $false } }) }
+$before = @(& $inFolder | ForEach-Object { $_.HWND })
+Start-Process explorer.exe -ArgumentList '/select,', ('"' + $path + '"')
+Add-Type -Namespace FilesPane -Name Window -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);'
+for ($i = 0; $i -lt 30; $i++) {
+  $all = & $inFolder
+  $new = @($all | Where-Object { $before -notcontains $_.HWND })
+  $window = if ($new.Count -gt 0) { $new[-1] } elseif ($i -ge 20 -and $all.Count -gt 0) { $all[-1] } else { $null }
+  if ($window) { [void][FilesPane.Window]::SetForegroundWindow([IntPtr]$window.HWND); break }
+  Start-Sleep -Milliseconds 100
+}
+`
+
+// A script as PowerShell's `-EncodedCommand` takes it, UTF-16LE in base64, so no quoting on the
+// command line can change it. REVEAL is ASCII: each character is its byte, then a zero.
+export const encoded = (script: string) => btoa([...script].map(char => `${char}\0`).join(''))
+
+// The file selected in a window of its folder: Finder's, or Explorer's, in front. Explorer takes
+// the path only with `\`. A host where PowerShell cannot start gets Explorer alone, which exits 1
+// whether or not it opened one: either counts as done once it starts.
 export function showInFolder($: EngineInterface, host: Host, abs: string) {
   if (host.system === 'windows') {
+    const path = backslashed(abs)
+
     return $.process
-      .run(['explorer', '/select,', backslashed(abs)], { timeoutMs: 5000 })
+      .run(['powershell', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded(REVEAL)], { timeoutMs: 15000, env: { FILES_PANE_PATH: path } })
+      .catch(() => $.process.run(['explorer', '/select,', path], { timeoutMs: 5000 }))
       .then(() => true)
       .catch(() => false)
   }
