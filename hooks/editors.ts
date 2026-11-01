@@ -112,10 +112,12 @@ export const folderApp = (host: Host) => (host.system === 'mac' ? 'Finder' : hos
 
 // The file selected in a window of its folder: Finder's, or Explorer's. Explorer takes the path
 // only with `\`, and exits 1 whether or not it opened one, so it counts as done once it starts.
+// `/select,` and the path go as two arguments: a path with a space is quoted on Explorer's command
+// line, and Explorer reads `"/select,C:\a b\f"`, quoted whole, as no switch and opens Documents.
 export function showInFolder($: EngineInterface, host: Host, abs: string) {
   if (host.system === 'windows') {
     return $.process
-      .run(['explorer', `/select,${backslashed(abs)}`], { timeoutMs: 5000 })
+      .run(['explorer', '/select,', backslashed(abs)], { timeoutMs: 5000 })
       .then(() => true)
       .catch(() => false)
   }
