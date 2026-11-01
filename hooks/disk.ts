@@ -120,18 +120,39 @@ export function listDir($: EngineInterface, path: string) {
   return listing
 }
 
+// The branch, and where the folder sits in its repository (`sub/`, or nothing at the top); null
+// outside a repository. `--abbrev-ref` reads HEAD's commit, which a repository without one yet does
+// not have: then the branch is the one HEAD names. A detached HEAD names no branch, only its commit.
+async function placeOf($: EngineInterface, at: string | undefined) {
+  const head = await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD', '--show-prefix'], 5000, at)
+
+  if (head && head.exitCode === 0) {
+    const [branch = '', prefix = ''] = head.stdout.split('\n')
+
+    return { branch: branch === 'HEAD' ? ((await headOf($, at ?? '')) ?? branch) : branch, prefix }
+  }
+
+  const [unborn, place] = await Promise.all([
+    run($, ['git', 'symbolic-ref', '--short', '-q', 'HEAD'], 5000, at),
+    run($, ['git', 'rev-parse', '--show-prefix'], 5000, at),
+  ])
+
+  if (!unborn || unborn.exitCode !== 0 || !place || place.exitCode !== 0) return null
+
+  return { branch: unborn.stdout.trim(), prefix: place.stdout.split('\n')[0] ?? '' }
+}
+
 // Git as the project shown sees it: `root`, or the session's folder when empty. Paths come
 // relative to that folder, as the tree spells them.
 async function readGit($: EngineInterface, root: string): Promise<Git | null> {
   if (root && !(await isTrusted($, root))) return null
 
   const at = root || undefined
-  // The branch, and where the folder sits in its repository (`sub/`, or nothing at the top).
-  const head = await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD', '--show-prefix'], 5000, at)
+  const where = await placeOf($, at)
 
-  if (!head || head.exitCode !== 0) return null
+  if (!where) return null
 
-  const [branch = '', prefix = ''] = head.stdout.split('\n')
+  const { branch, prefix } = where
   const [state, numstat, ahead, ignored] = await Promise.all([
     run($, ['git', 'status', '--porcelain', '-z', '-uall'], 10000, at),
     run($, ['git', 'diff', '--numstat', '-z', '--relative', 'HEAD'], 10000, at),
@@ -273,17 +294,17 @@ const recount = (hunk: string[]) => {
 }
 
 // What changed in a file since HEAD, as unified-diff hunks with two lines around each change; a
-// file git does not track yet, whole, as added lines. Past DIFF_LINES the rest is left out, and
-// counted.
+// file git does not track yet, or any file before the first commit, whole, as added lines. Past
+// DIFF_LINES the rest is left out, and counted.
 // None outside the session's repository: see isTrusted.
 export async function diffOf($: EngineInterface, abs: string): Promise<{ text: string; more: number }> {
   const dir = dirOf(abs)
 
   if (!(await isTrusted($, dir))) return { text: '', more: 0 }
 
-  const tracked = await run($, ['git', 'ls-files', '--error-unmatch', '--', abs], 5000, dir)
+  const [tracked, head] = await Promise.all([run($, ['git', 'ls-files', '--error-unmatch', '--', abs], 5000, dir), headOf($, dir)])
   const argv =
-    tracked && tracked.exitCode === 0
+    tracked && tracked.exitCode === 0 && head !== null
       ? ['git', 'diff', '--no-color', '--no-ext-diff', '-U2', 'HEAD', '--', abs]
       : ['git', 'diff', '--no-color', '--no-ext-diff', '-U2', '--no-index', '--', '/dev/null', abs]
   // `--no-index` exits 1 when the files differ, which they always do: its output is what counts.
