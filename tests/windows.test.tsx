@@ -206,7 +206,7 @@ test('on Windows, the ⋯ copies paths with \\, shows the file in Explorer, and 
   expect(await shows(ui, 'Open in')).toBe(false)
   expect(await shows(ui, 'Show in Finder')).toBe(false)
   await ui.press(press('folder'))
-  expect(ran.map(one => one.argv)).toContainEqual(['explorer', '/select,C:\\proj\\src\\client.js'])
+  expect(ran.map(one => one.argv)).toContainEqual(['explorer', '/select,', 'C:\\proj\\src\\client.js'])
   // Explorer's exit 1 is no failure.
   expect(toasts.filter(one => one.startsWith('Could not'))).toEqual([])
   // Windows is known from the session's folder: no uname, no which. Editors are looked for on the
@@ -214,6 +214,21 @@ test('on Windows, the ⋯ copies paths with \\, shows the file in Explorer, and 
   expect(ran.some(one => one.argv[0] === 'uname' || one.argv[0] === 'which')).toBe(false)
   expect(ran.filter(one => one.argv[0] === 'where').map(one => one.argv[1])).toContain('$PATH:code')
   expect(ran.every(one => one.argv[0] !== 'where' || one.argv[1]!.startsWith('$PATH:'))).toBe(true)
+  await ui.unmount()
+})
+
+test('on Windows, Show in Explorer hands a path with a space to Explorer apart from its switch', async ($, on) => {
+  const { ran } = engine(on)
+  await $.session.start({ cwd: 'C:\\proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Read', file_path: 'C:\\proj\\my notes\\plan.md' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const FILE = 'C:/proj/my notes/plan.md'
+
+  await ui.press({ key: `more:touched:${FILE}` })
+  await ui.press({ key: `folder:touched:${FILE}` })
+  // As one argument, `"/select,C:\proj\my notes\plan.md"`, Explorer would open Documents instead.
+  expect(ran.map(one => one.argv)).toContainEqual(['explorer', '/select,', 'C:\\proj\\my notes\\plan.md'])
   await ui.unmount()
 })
 
