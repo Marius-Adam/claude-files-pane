@@ -500,6 +500,27 @@ test('a press anywhere on a folder row opens it and closes it', async ($, on) =>
   await ui.unmount()
 })
 
+test('VS Code lays nothing over a row: a folder opens from its caret, and its name is text', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'vscode', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+
+  // Its webview places no absolute Box and fills every Button, so a press layer, a shimmer or a
+  // folder's name as a Button would each draw as a filled bar of its own.
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { props: { position?: string } }[]
+  expect(boxes.filter(one => one.props.position === 'absolute')).toEqual([])
+  const keys = ((await ui.findAll({ type: 'Button' })) as unknown as { props: { key?: string } }[]).map(one => one.props.key ?? '')
+  expect(keys.filter(key => /^(fold|dir|away):/.test(key) || key === 'up:row')).toEqual([])
+  expect(await text(ui, /^src$/)).toBe('src')
+
+  await ui.press({ key: 'caret:src' })
+  expect(await text(ui, /^client\.js$/)).toBe('client.js')
+  await ui.press({ key: 'caret:src' })
+  expect(await text(ui, /^client\.js$/)).toBeUndefined()
+  await ui.unmount()
+})
+
 test('git names a renamed file once, from the new name it reports first', async ($, on) => {
   engine(on, { dirty: ['R  src/client.js', 'src/old-client.js', '?? notes/a file with spaces.md'], ahead: '0' })
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })

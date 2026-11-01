@@ -182,6 +182,11 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // A surface that paints (not the terminal, where a border is box-drawing characters three rows
     // tall): it gets rounded pills and rows, soft cards and moving badges.
     const isRich = Svg !== null
+    // A surface that paints and also lays a Box over another (`position="absolute"`) and draws a
+    // `plain` Button without chrome: a row's press layer and shimmer need both. Today's VS Code
+    // webview does neither, so a layer there flows under its row as a filled button of its own;
+    // there a row is pressed by its caret, and a menu's items are Buttons, as on the terminal.
+    const canLayer = isRich && e.surface !== 'vscode'
     // A bordered Box is what the desktop rounds; a clear border keeps the corner without a line.
     const rounded = (color = CLEAR) => (isRich ? ({ borderStyle: 'round', borderColor: color } as const) : {})
     // The terminal draws a color's alpha as if it were opaque: a tint there is a solid block in the
@@ -396,7 +401,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           overflow="hidden"
           hover={{ backgroundColor: HOVER }}
         >
-          {isRich ? (
+          {canLayer ? (
             <Text size="footnote">{label}</Text>
           ) : (
             <Button key={`${key}:${id}`} plain onPress={onPress}>
@@ -467,12 +472,13 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
     // A folder's chevron, which a file row draws blank so a file's icon lines up with a folder's.
     // Where the surface paints it is a thin SVG stroke, and a press on the row opens it; only a
-    // Button takes a press and a Button holds only text, so the terminal's is a glyph.
+    // Button takes a press and a Button holds only text, so the terminal's is a glyph, and so is a
+    // surface's that lays no press over the row: a glyph as wide as its Button draws it.
     const chevron = (isOpen = false, onPress?: () => unknown, key?: string) =>
-      Svg ? (
+      Svg && (canLayer || !onPress) ? (
         <Svg source={onPress ? chevronSvg(isOpen) : BLANK_SVG} alt={onPress ? (isOpen ? 'open' : 'closed') : 'file'} width={12} height={12} />
       ) : (
-        <Box width={2} flexShrink={0} justifyContent="center" alignItems="center">
+        <Box width={isRich ? undefined : 2} flexShrink={0} justifyContent="center" alignItems="center">
           {onPress && (
             <Button key={key} plain dimColor onPress={onPress}>
               <Text mono size="caption">
@@ -491,7 +497,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // the row's end, and the ellipsis falls there, where the row clips it. No `label`: the desktop
     // draws a label as text, over the chevron and the icon; the key is its address.
     const pressAnywhere = (key: string, onPress: (press: { surface: typeof e.surface }) => unknown) =>
-      isRich ? (
+      canLayer ? (
         <Box position="absolute" top={0} left={0} right={-e.props.bodyColumns} bottom={0} flexDirection="column" overflow="hidden">
           <Button key={key} plain onPress={onPress}>
             <Text color={CLEAR}>{'\u00a0'.repeat(Math.max(600, e.props.bodyColumns * 12))}</Text>
@@ -511,7 +517,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // Wider and taller than any row, so it always covers; the row cuts it to size.
     const sweepWidth = Math.min(4096, Math.max(240, e.props.bodyColumns * 10))
     const shimmer = (color: string, height = 48) =>
-      Svg ? (
+      Svg && canLayer ? (
         <Box position="absolute" top={0} left={0} right={0} bottom={0} overflow="hidden">
           <Svg source={shimmerSvg(color, sweepWidth, height)} alt="working" width={sweepWidth} height={height} />
         </Box>
@@ -521,7 +527,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // wrap its label ("0 / files") in a narrow header.
     // Given a press, the pill is a control: it lights under the pointer, a press anywhere on it counts.
     const pill = (label: string, color: string, isLive = false, press?: { key: string; onPress: () => unknown }) =>
-      isRich ? (
+      isRich && (canLayer || !press) ? (
         <Box
           key={press ? `pill:${press.key}` : undefined}
           {...rounded(tint(color, '4d'))}
@@ -743,6 +749,11 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           const count = SKIP.has(entry.name) ? 0 : changedUnder(path)
           const active = activeUnder(path)
           const folderColor = entry.name.startsWith('.') ? MUTED : count > 0 ? EDIT : FOLDER
+          const name = (
+            <Text color={active ? accentOf(active) : count > 0 ? DIRTY : undefined} dimColor={!active && count === 0 && isIgnored(path, true)}>
+              {entry.name}
+            </Text>
+          )
 
           rows.push(
             <Box
@@ -762,11 +773,15 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   {chevron(isOpen, () => toggle(path), `caret:${path}`)}
                   {icon(folderIcon(entry.name, isOpen), entry.name, '▪', folderColor, 16)}
                 </Box>
-                <Button key={`dir:${path}`} plain onPress={() => toggle(path)}>
-                  <Text color={active ? accentOf(active) : count > 0 ? DIRTY : undefined} dimColor={!active && count === 0 && isIgnored(path, true)}>
-                    {entry.name}
-                  </Text>
-                </Button>
+                {/* Where the surface paints but lays no press over the row, a Button is filled: the
+                    name is text there, and the caret takes the press. */}
+                {isRich && !canLayer ? (
+                  name
+                ) : (
+                  <Button key={`dir:${path}`} plain onPress={() => toggle(path)}>
+                    {name}
+                  </Button>
+                )}
               </Box>
               {(active || count > 0) && (
                 <Box flexShrink={0} gap="xs" alignItems="center">
