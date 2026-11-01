@@ -1,0 +1,21 @@
+# Temporary, dropped before merge: Open in on a real Windows host, with VS Code installed.
+name: Windows Open in smoke
+
+on: pull_request
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install VS Code
+        run: |
+          choco install vscode -y --no-progress
+          "C:\Program Files\Microsoft VS Code\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install tsx
+        run: npm install --no-save tsx@4.19.2
+      - name: Find VS Code and open a file in it, as the pane does
+        run: node --import tsx --import ./.github/smoke/register.mjs .github/smoke/open-in.ts
