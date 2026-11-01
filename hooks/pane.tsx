@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, RenderInput } from 'claude-code'
+import type { EngineInterface, RenderInput, Space } from 'claude-code'
 
 import type { Menu, Touch, View } from '../types'
 import { absOf, cardSince, follow, reveal, toggleDiff } from './activity'
@@ -187,6 +187,9 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // webview does neither, so a layer there flows under its row as a filled button of its own;
     // there a row is pressed by its caret, and a menu's items are Buttons, as on the terminal.
     const canLayer = isRich && e.surface !== 'vscode'
+    // The small step between things. VS Code draws the named step `xs` as a whole cell across and
+    // none down, so chips that wrap touch and a card's lines sit flush; half a cell, both ways, there.
+    const xs: Space = e.surface === 'vscode' ? 0.5 : 'xs'
     // A bordered Box is what the desktop rounds; a clear border keeps the corner without a line.
     const rounded = (color = CLEAR) => (isRich ? ({ borderStyle: 'round', borderColor: color } as const) : {})
     // The terminal draws a color's alpha as if it were opaque: a tint there is a solid block in the
@@ -259,10 +262,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const MARKS = { add: '+', del: '−', same: '\u00a0' } as const
 
       return (
-        <Box key={`diffview:${id}`} flexDirection="column" {...rounded(CARD_EDGE)} paddingY="xs" overflow="hidden">
+        <Box key={`diffview:${id}`} flexDirection="column" {...rounded(CARD_EDGE)} paddingY={xs} overflow="hidden">
           {rows.map((row, i) =>
             row.kind === 'hunk' ? (
-              <Box key={`hunk:${id}:${i}`} gap={1} paddingX={1} marginTop={i === 0 ? undefined : 'xs'} overflow="hidden">
+              <Box key={`hunk:${id}:${i}`} gap={1} paddingX={1} marginTop={i === 0 ? undefined : xs} overflow="hidden">
                 <Text mono dimColor size="footnote">
                   {number(null)}
                 </Text>
@@ -416,7 +419,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // across the menu on the terminal.
       const divider = (i: number) =>
         Svg ? (
-          <Box key={`rule:${i}:${id}`} paddingX={1} paddingY="xs">
+          <Box key={`rule:${i}:${id}`} paddingX={1} paddingY={xs}>
             <Svg source={RULE_SVG} alt="divider" height={1} />
           </Box>
         ) : (
@@ -443,15 +446,15 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             backgroundColor={CARD}
             flexDirection="column"
             alignItems="stretch"
-            paddingX={isRich ? 'xs' : 0}
-            paddingY="xs"
+            paddingX={isRich ? xs : 0}
+            paddingY={xs}
           >
             {groups.flatMap((group, i) => [...(i > 0 ? [divider(i)] : []), ...group.map(item)])}
           </Box>
         </Box>,
         ...(isDiff && open
           ? [
-              <Box key={`diff:${id}`} flexDirection="column" gap="xs" paddingLeft={indent + 1} paddingRight={1}>
+              <Box key={`diff:${id}`} flexDirection="column" gap={xs} paddingLeft={indent + 1} paddingRight={1}>
                 {open.text ? (
                   diffView(open.text, id)
                 ) : (
@@ -534,7 +537,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           backgroundColor={tint(color, '1f')}
           paddingX={1}
           paddingY={0}
-          gap="xs"
+          gap={xs}
           alignItems="center"
           flexShrink={0}
           {...(press ? { overflow: 'hidden', hover: { backgroundColor: tint(color, '3d') } } : {})}
@@ -769,7 +772,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             >
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
                 {/* The chevron sits close to the folder's icon; a press on it or the name opens it. */}
-                <Box gap="xs" alignItems="center">
+                <Box gap={xs} alignItems="center">
                   {chevron(isOpen, () => toggle(path), `caret:${path}`)}
                   {icon(folderIcon(entry.name, isOpen), entry.name, '▪', folderColor, 16)}
                 </Box>
@@ -784,7 +787,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 )}
               </Box>
               {(active || count > 0) && (
-                <Box flexShrink={0} gap="xs" alignItems="center">
+                <Box flexShrink={0} gap={xs} alignItems="center">
                   {active && dot(accentOf(active), true)}
                   {count > 0 && (
                     <Text color={DIRTY} size="footnote" tabular>
@@ -829,7 +832,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               {touch?.isActive && shimmer(accentOf(touch))}
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
                 {/* The chevron's width, unseen, so a file's icon lines up with a sibling folder's. */}
-                <Box gap="xs" alignItems="center">
+                <Box gap={xs} alignItems="center">
                   {hasDirs && chevron()}
                   {chip(entry.name)}
                 </Box>
@@ -858,7 +861,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // The way up, the tree's first row: the folder above the one shown, past the project's top too.
     const upRow = (
       <Box key="row:.." {...rounded()} alignItems="center" gap={1} paddingX={1} paddingY={0} overflow="hidden" hover={{ backgroundColor: HOVER }}>
-        <Box gap="xs" alignItems="center">
+        <Box gap={xs} alignItems="center">
           {chevron()}
           {icon(folderIcon('..', false), 'up', '▪', MUTED, 16)}
         </Box>
@@ -948,10 +951,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               alignItems="center"
               gap={1}
               paddingX={1}
-              paddingY={isRich ? 'xs' : 0}
+              paddingY={isRich ? xs : 0}
               flexWrap="wrap"
             >
-              <Box gap="xs" alignItems="center" overflow="hidden">
+              <Box gap={xs} alignItems="center" overflow="hidden">
                 {icon(BRANCH_SVG, 'branch', '⎇', READ, 16)}
                 <Text weight="semibold">{g.branch}</Text>
                 {g.ahead ? pill(`↑${g.ahead}`, DONE) : null}
@@ -962,7 +965,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   clean, nothing changed
                 </Text>
               ) : (
-                <Box gap="xs" alignItems="center">
+                <Box gap={xs} alignItems="center">
                   {totals[0] > 0 && pill(`+${totals[0]}`, ADDED)}
                   {totals[1] > 0 && pill(`−${totals[1]}`, REMOVED)}
                   {pill(`${g.changed.length} changed`, DIRTY, false, { key: 'changed', onPress: showChanged })}
@@ -972,20 +975,20 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )}
 
           <Box columnGap={2} rowGap={0} flexWrap="wrap" overflow="hidden">
-            <Box gap="xs" alignItems="center">
+            <Box gap={xs} alignItems="center">
               {dot(READ)}
               <Text dimColor size="footnote">
                 Claude read
               </Text>
             </Box>
-            <Box gap="xs" alignItems="center">
+            <Box gap={xs} alignItems="center">
               {dot(EDIT)}
               <Text dimColor size="footnote">
                 Claude edited
               </Text>
             </Box>
             {g !== null && (
-              <Box gap="xs" alignItems="center">
+              <Box gap={xs} alignItems="center">
                 {dot(DIRTY)}
                 <Text dimColor size="footnote">
                   Not committed
@@ -1006,7 +1009,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           />
         )}
 
-        <Box gap="xs" flexWrap="wrap" paddingX={1} alignItems="center">
+        <Box gap={xs} flexWrap="wrap" paddingX={1} alignItems="center">
           {tool('refresh', '↻ Refresh', async () => {
             forget()
             await refreshGit($)
@@ -1018,10 +1021,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {tool('hidden', 'Dotfiles', () => setView({ showHidden: !v.showHidden }), v.showHidden ? 'on' : 'off', '◌')}
         </Box>
 
-        <Box flexDirection="column" borderStyle="round" borderColor={edge} backgroundColor={isRich ? CARD : undefined} gap="xs">
+        <Box flexDirection="column" borderStyle="round" borderColor={edge} backgroundColor={isRich ? CARD : undefined} gap={xs}>
           {head(
             'CLAUDE TOUCHED',
-            <Box gap="xs" alignItems="center">
+            <Box gap={xs} alignItems="center">
               {tool(
                 'scope',
                 'Whole session',
@@ -1118,7 +1121,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             query ? (
               plural(matches.length, 'file')
             ) : v.dir !== '' || v.root !== '' ? (
-              <Box gap="xs" alignItems="center">
+              <Box gap={xs} alignItems="center">
                 {tool('home', '⌂ Project', () => setView({ root: '', dir: '', expanded: [] }))}
                 {isRich ? pill(v.dir ? base(v.dir) : project, MUTED) : <Text dimColor size="caption">{v.dir ? base(v.dir) : project}</Text>}
               </Box>
@@ -1126,7 +1129,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               project
             ),
           )}
-          <Box flexDirection="column" marginTop="xs">
+          <Box flexDirection="column" marginTop={xs}>
             {query && matches.length === 0 && (
               <Box paddingX={1} overflow="hidden">
                 <Text dimColor>No file matches "{v.query}".</Text>
