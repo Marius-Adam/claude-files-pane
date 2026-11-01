@@ -480,6 +480,64 @@ test('an edit outside the folder the tree shows takes it back to the top, opened
   await ui.unmount()
 })
 
+// A drawn element as the kit hands it back, its children described the same way.
+type Drawn = { type: string; key?: string; props: Record<string, unknown>; text?: string; children: (Drawn | string)[] }
+
+// The elements from `from` down to the first whose own text matches `pattern`, `from` first.
+const pathTo = (from: Drawn, pattern: RegExp): Drawn[] | null => {
+  if (from.type === 'Text' && pattern.test(from.children.join(''))) return [from]
+
+  for (const child of from.children) {
+    const below = typeof child === 'string' ? null : pathTo(child, pattern)
+
+    if (below) return [from, ...below]
+  }
+
+  return null
+}
+
+test('a folder name wider than the pane gives way in the header, cut with an ellipsis', async ($, on) => {
+  const long = 'a-folder-name-far-too-long-for-any-narrow-pane'
+  on('command.register', () => ({ value: { command: 'files' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.cwd', () => ({ value: `/work/${long}` }))
+  on('tool.call', () => ({ result: {} }))
+  on('fs.list', () => ({ value: [entry('notes.md', 'file')] }))
+  on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  await $.session.start({ cwd: `/work/${long}`, surface: 'desktop', isInteractive: true })
+
+  // Every Box between the header and the name may shrink below its content, and the name ends in
+  // an ellipsis where it is cut.
+  const givesWay = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) => {
+    const rows = (await ui.findAll({ type: 'Box' })) as Drawn[]
+    const header = rows.find(one => one.props.justifyContent === 'space-between' && /^ALL FILES/.test(one.text ?? ''))!
+    const [, ...boxes] = pathTo(header, new RegExp(long))!
+    const name = boxes.pop()!
+
+    expect(boxes.map(one => [one.props.flexShrink ?? 1, one.props.minWidth])).toEqual(boxes.map(() => [1, 0]))
+    expect(name.props.wrap).toBe('truncate-end')
+  }
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    // The project's own name, at its top.
+    const ui = await $.ui.mount({ ...PANE, surface })
+    await givesWay(ui)
+    await ui.unmount()
+  }
+
+  // A file Claude writes outside the project takes the tree to its folder, named beside the way
+  // home, which stays whole.
+  await $.tool.call({ tool: 'Write', file_path: `/notes/${long}/notes.md`, content: '' })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    await givesWay(ui)
+    expect((await ui.find({ key: 'chip:home' }))?.props.flexShrink).toBe(surface === 'desktop' ? 0 : undefined)
+    await ui.unmount()
+  }
+})
+
 test('a press anywhere on a folder row opens it and closes it', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
