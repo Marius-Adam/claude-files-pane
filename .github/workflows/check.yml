@@ -1,4 +1,5 @@
-# Validates the mod and runs its tests on every push and pull request. Both run without a login.
+# Validates the mod and runs its tests on every push and pull request, and keeps main fed only from
+# staging. Validation and tests run without a login.
 # Type-checking needs the API types Claude Code writes when it loads the mod, so it stays local:
 # `npx -p typescript tsc -p . --noEmit` (see the README's Develop section).
 name: Check
@@ -22,3 +23,19 @@ jobs:
         run: claude plugin validate .
       - name: Run the tests
         run: claude plugin test .
+
+  # A release is one pull request from staging to main, so a pull request into main from any other
+  # branch, or from a fork's staging, fails here. Main's ruleset requires this check.
+  from-staging:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Come from this repository's staging
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [ "$HEAD_REF" != staging ] || [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::Pull requests into main come from staging. Open this one against staging instead."
+            exit 1
+          fi

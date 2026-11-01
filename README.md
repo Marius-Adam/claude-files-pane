@@ -121,6 +121,8 @@ claude plugin validate . && claude plugin test .
 
 Claude Code writes its API types into `.claude-plugin/types/` the first time it loads the mod; then `npx -p typescript tsc -p . --noEmit` type-checks it. CI runs validation and tests on every push.
 
+Pull requests go to `staging`. A release is one pull request from `staging` to `main` that bumps the version in `.claude-plugin/plugin.json`, merged with a merge commit, since the marketplace installs from `main`.
+
 | Path | What's there |
 | :-- | :-- |
 | `hooks/register.tsx` | The mod's hooks: what Claude does reaches the pane through these |
