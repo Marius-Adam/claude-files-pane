@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import {
+  absOf,
   afterCommit,
   commitDir,
   describe,
@@ -16,10 +17,10 @@ import {
   touchOf,
   upsert,
 } from './activity'
-import { forget, headOf, redraw, refreshGit } from './disk'
+import { forget, headOf, redraw, refreshGit, sessionDir } from './disk'
 import { hostOf } from './editors'
 import { renderPane } from './pane'
-import { base, join, rel, tailOf } from './paths'
+import { base, rel, tailOf } from './paths'
 import { PANE } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
@@ -33,7 +34,7 @@ const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { sh
 // what it reads of the disk is in disk.ts, and what it makes of Claude's work in activity.ts.
 
 const openPane = async ($: EngineInterface) => {
-  const cwd = await $.session.cwd().catch(() => '')
+  const cwd = await sessionDir($).catch(() => '')
 
   return $.ui.open({ id: PANE, title: `Files: ${base(cwd) || 'project'}` })
 }
@@ -70,7 +71,7 @@ export const register: Register = on => {
 
   on('tool.call', async ($, e, next) => {
     // The pane's bookkeeping never stands between Claude and its tool: a failure here is dropped.
-    const cwd = await $.session.cwd().catch(() => '')
+    const cwd = await sessionDir($).catch(() => '')
     const repo = commitDir(e, cwd)
 
     if (repo !== null) {
@@ -103,7 +104,7 @@ export const register: Register = on => {
       }
     }
 
-    const abs = hit.path.startsWith('/') ? hit.path : join(cwd, hit.path)
+    const abs = absOf(cwd, hit.path)
     const path = rel(cwd, abs)
     await setNow($, () => ({ verb: hit.isEdit ? 'editing' : 'reading', path }))
     await update($, touched, list => upsert(list, path, hit.isEdit)).catch(() => {})

@@ -1,5 +1,5 @@
-# Validates the mod and runs its tests on every push and pull request, and keeps main fed only from
-# staging. Validation and tests run without a login.
+# Validates the mod and runs its tests on every push and pull request, on macOS, Linux and Windows,
+# and keeps main fed only from staging. Validation and tests run without a login.
 # Type-checking needs the API types Claude Code writes when it loads the mod, so it stays local:
 # `npx -p typescript tsc -p . --noEmit` (see the README's Develop section).
 name: Check
@@ -11,7 +11,12 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      # One system failing still lets the others finish, so a run says which ones break.
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

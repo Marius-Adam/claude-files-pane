@@ -191,7 +191,7 @@ test('with no editor installed there is no Open in, and Show in Finder selects t
   await ui.press({ key: MORE })
   expect(await shows(ui, 'Open in')).toBe(false)
 
-  await ui.press(press('finder'))
+  await ui.press(press('folder'))
   expect(ran).toContainEqual(['open', '-R', FILE])
   expect(await shows(ui, 'Show in Finder')).toBe(false)
   await ui.unmount()
