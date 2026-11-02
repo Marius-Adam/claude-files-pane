@@ -80,6 +80,11 @@ export const closedAbove = (old: View, path: string) => {
     .filter(dir => (!old.dir || dir.startsWith(`${old.dir}/`)) && !old.expanded.includes(dir))
 }
 
+// The whole tree again after it showed only git's changed files: the folders that filter opened
+// close, and the ones the person had open stay open.
+export const unfiltered = (old: View): View =>
+  old.changed === null ? old : { ...old, changed: null, expanded: old.expanded.filter(dir => !old.changed!.includes(dir)) }
+
 // Whether the tree, showing the folder `dir`, has `path` in it: the project's top shows everything.
 export const isUnder = (dir: string, path: string) => !path.startsWith('../') && (dir === '' || path.startsWith(`${dir}/`))
 

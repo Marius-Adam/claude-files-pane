@@ -3,7 +3,7 @@ import type { View } from '../types'
 export const PANE = 'files-pane'
 
 // Hidden files show by default, as in VS Code's explorer: the toolbar offers to hide them.
-export const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], showSizes: false, showHidden: true }
+export const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], showSizes: false, showHidden: true, changed: null }
 
 // The pane's values, each made by `atom` in every file that uses it (the engine's scan reads only
 // an atom made in the file at hand), so their tags live here to be kept the same. Change a tag when
@@ -14,7 +14,7 @@ export const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], 
 //   earlier  'touched-3'  the earlier turns' files, for the whole-session list: Touch[]
 //   scope    'scope-1'    which of those the list shows: Scope
 //   isTouchedAll (none)   whether that list shows every file, past the newest few: boolean
-//   view     'view-3'     the tree's controls: View
+//   view     'view-4'     the tree's controls: View
 //   git      'git-4'      git's view of the project shown: Git | null
 //   diff     'diff-2'     the diff open under a file's row: Diff | null
 //   menu     'menu-2'     the file whose actions are open, and their submenu: Menu | null

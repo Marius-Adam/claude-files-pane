@@ -35,7 +35,7 @@ import {
   TOOL,
   WRITE,
 } from './look'
-import { backslashed, base, closedAbove, dirOf, isUnder, isWindowsPath, join, listPath, parentOf, plural, rank, rel, sizeOf, timeOf, where } from './paths'
+import { backslashed, base, closedAbove, dirOf, isUnder, isWindowsPath, join, listPath, parentOf, plural, rank, rel, sizeOf, timeOf, unfiltered, where } from './paths'
 import { DEFAULT_VIEW, PANE } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
@@ -50,7 +50,7 @@ const isTouchedAll = atom({ plugin: 'files-pane', key: 'isTouchedAll' } as const
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
 const tick = atom({ plugin: 'files-pane', key: 'tick' } as const, 0)
 const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-3' })
-const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-3' })
+const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-4' })
 
 const TREE_ROWS = 300
 const MATCHES = 50
@@ -104,6 +104,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const home = v.root || cwd
     const project = base(home)
     const changed = new Set(g?.changed ?? [])
+    // Whether the tree shows only those files and the folders down to them ("N changed" pressed).
+    const isFiltered = v.changed !== null && changed.size > 0
     // A touched file as the tree spells it, relative to the project shown; null outside it.
     const keyOf = (path: string) => {
       const abs = absOf(cwd, path)
@@ -164,19 +166,23 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       if (path) void reveal($, path)
     }
 
-    // Every file git reports changed, in sight in the tree: search cleared, the folders down to each
-    // opened, the first scrolled to. The tree goes to the project's top when one is outside the
-    // folder it shows. A deleted file has no row, so opens nothing.
-    const showChanged = async () => {
+    // The tree shows only the files git reports changed and the folders down to each, opened, with
+    // search cleared and the first scrolled to; a second press shows the whole tree again. A big
+    // project's open folders draw more than the desktop takes, so the folders it opened list nothing
+    // else. The tree goes to the project's top when a file is outside the folder it shows. A deleted
+    // file has no row, so opens nothing.
+    const toggleChanged = async () => {
       const paths = g?.changed ?? []
+      const next = await update($, view, old => {
+        if (old.changed !== null) return unfiltered(old)
 
-      await update($, view, old => {
         const start = paths.every(path => isUnder(old.dir, path)) ? { ...old, query: '' } : { ...old, query: '', dir: '' }
+        const opened = [...new Set(paths.flatMap(path => closedAbove(start, path)))]
 
-        return { ...start, expanded: [...new Set([...start.expanded, ...paths.flatMap(path => closedAbove(start, path))])] }
+        return { ...start, expanded: [...start.expanded, ...opened], changed: opened }
       })
       redraw($)
-      if (paths[0]) void reveal($, paths[0])
+      if (next.changed !== null && paths[0]) void reveal($, paths[0])
     }
 
     // A surface that paints (not the terminal, where a border is box-drawing characters three rows
@@ -757,6 +763,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const sorted = entries
         .filter(entry => !SKIP.has(entry.name) || v.showHidden)
         .filter(entry => v.showHidden || !entry.name.startsWith('.'))
+        .filter(entry => !isFiltered || (entry.kind === 'dir' ? changedUnder(join(dir, entry.name)) > 0 : changed.has(join(dir, entry.name))))
         .sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name))
       // A file keeps the chevron's width only to line up with a folder beside it.
       const hasDirs = sorted.some(entry => entry.kind === 'dir')
@@ -988,7 +995,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 <Box gap={xs} alignItems="center">
                   {totals[0] > 0 && pill(`+${totals[0]}`, ADDED)}
                   {totals[1] > 0 && pill(`−${totals[1]}`, REMOVED)}
-                  {pill(`${g.changed.length} changed`, DIRTY, false, { key: 'changed', onPress: showChanged })}
+                  {pill(`${g.changed.length} changed${isFiltered ? ' ✕' : ''}`, DIRTY, false, { key: 'changed', onPress: toggleChanged })}
                 </Box>
               )}
             </Box>
@@ -1137,7 +1144,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
         <Box flexDirection="column" borderStyle="round" borderColor={edge} backgroundColor={isRich ? CARD : undefined} gap={0}>
           {head(
-            query ? 'MATCHES' : 'ALL FILES',
+            query ? 'MATCHES' : isFiltered ? 'CHANGED FILES' : 'ALL FILES',
             query ? (
               plural(matches.length, 'file')
             ) : v.dir !== '' || v.root !== '' ? (

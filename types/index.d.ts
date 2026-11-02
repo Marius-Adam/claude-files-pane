@@ -13,7 +13,8 @@ export type Now =
 export type Touch = { path: string; isEdited: boolean; isActive: boolean; isCommitted: boolean; at: number }
 
 // The pane's own controls: search text, the project shown (`root`, absolute; empty for the
-// session's folder), the folder shown under it, open folders and toggles.
+// session's folder), the folder shown under it, open folders and toggles. `changed` is null, or
+// while the tree shows only git's changed files, the folders that filter opened, to close after.
 export type View = {
   query: string
   root: string
@@ -21,6 +22,7 @@ export type View = {
   expanded: string[]
   showSizes: boolean
   showHidden: boolean
+  changed: string[] | null
 }
 
 // The branch, how far it is ahead of its upstream (null without one), the paths git reports as

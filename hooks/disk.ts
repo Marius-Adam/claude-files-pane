@@ -2,13 +2,13 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { Git, Mark } from '../types'
-import { dirOf, join, listPath, slashed } from './paths'
+import { dirOf, join, listPath, slashed, unfiltered } from './paths'
 import { DEFAULT_VIEW } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
 // uses it, so every file names its own; state.ts lists the tags they must all share.
 const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-4' })
-const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-3' })
+const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-4' })
 
 // What the pane reads of the disk: git's view of the project shown, folder listings and the file
 // index search walks. All of it read-only: listings, and git commands that change nothing, run
@@ -202,6 +202,8 @@ export function refreshGit($: EngineInterface): Promise<void> {
       isStale = false
       const next = await readGit($, (await read($, view)).root)
       await update($, git, () => next)
+      // With nothing changed left, the tree showing only changed files shows the whole tree again.
+      if (!next?.changed.length) await update($, view, unfiltered)
       redraw($)
     } while (isStale)
   })()
