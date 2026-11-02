@@ -43,6 +43,18 @@ export const sizeOf = (bytes: number) => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+// The name of `dir`, a folder under `home` that may climb past it as `..` segments.
+export const nameAt = (home: string, dir: string) => {
+  const parts = home.split('/')
+
+  for (const part of dir.split('/').filter(Boolean)) {
+    if (part === '..') parts.pop()
+    else parts.push(part)
+  }
+
+  return parts[parts.length - 1] || '/'
+}
+
 // The folder above `dir`, which may climb past the project as `..` segments.
 export const parentOf = (dir: string) => {
   if (dir === '' || dir.split('/').every(part => part === '..')) return join(dir, '..')

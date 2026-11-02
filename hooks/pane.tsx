@@ -35,7 +35,7 @@ import {
   TOOL,
   WRITE,
 } from './look'
-import { backslashed, base, closedAbove, dirOf, isUnder, isWindowsPath, join, listPath, parentOf, plural, rank, rel, sizeOf, timeOf, unfiltered, where } from './paths'
+import { backslashed, base, closedAbove, dirOf, isUnder, isWindowsPath, join, listPath, nameAt, parentOf, plural, rank, rel, sizeOf, timeOf, unfiltered, where } from './paths'
 import { DEFAULT_VIEW, PANE } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
@@ -130,6 +130,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       }))
       redraw($)
     }
+
+    // A press on a closed folder's row opens it in place; on an open one, goes into it: the tree
+    // then shows that folder, with the .. row above leading back. Its caret only opens and closes it.
+    const openOrEnter = async (path: string) => (v.expanded.includes(path) ? setView({ dir: path }) : toggle(path))
 
     // A file's actions, behind the ⋯ at the end of its row: open under the row for one file at a
     // time, in the list it was pressed in. A diff belongs to the actions it was opened from.
@@ -807,7 +811,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 {isRich && !canLayer ? (
                   name
                 ) : (
-                  <Button key={`dir:${path}`} plain onPress={() => toggle(path)}>
+                  <Button key={`dir:${path}`} plain onPress={() => openOrEnter(path)}>
                     {name}
                   </Button>
                 )}
@@ -822,7 +826,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   )}
                 </Box>
               )}
-              {pressAnywhere(`fold:${path}`, () => toggle(path))}
+              {pressAnywhere(`fold:${path}`, () => openOrEnter(path))}
             </Box>,
           )
 
@@ -884,7 +888,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       }
     }
 
-    // The way up, the tree's first row: the folder above the one shown, past the project's top too.
+    // The way up, the tree's first row: the folder above the one shown, past the project's top too,
+    // by its name.
     const upRow = (
       <Box key="row:.." {...rounded()} alignItems="center" gap={1} paddingX={1} paddingY={0} overflow="hidden" hover={{ backgroundColor: HOVER }}>
         <Box gap={xs} alignItems="center">
@@ -892,7 +897,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {icon(folderIcon('..', false), 'up', '▪', MUTED, 16)}
         </Box>
         <Button key="up" plain dimColor onPress={() => setView({ dir: parentOf(v.dir), expanded: [] })}>
-          ..
+          {`.. ${nameAt(home, parentOf(v.dir))}`}
         </Button>
         {pressAnywhere('up:row', () => setView({ dir: parentOf(v.dir), expanded: [] }))}
       </Box>
