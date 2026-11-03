@@ -43,6 +43,18 @@ export const sizeOf = (bytes: number) => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+// The name of `dir`, a folder under `home` that may climb past it as `..` segments.
+export const nameAt = (home: string, dir: string) => {
+  const parts = home.split('/')
+
+  for (const part of dir.split('/').filter(Boolean)) {
+    if (part === '..') parts.pop()
+    else parts.push(part)
+  }
+
+  return parts[parts.length - 1] || '/'
+}
+
 // The folder above `dir`, which may climb past the project as `..` segments.
 export const parentOf = (dir: string) => {
   if (dir === '' || dir.split('/').every(part => part === '..')) return join(dir, '..')
@@ -79,6 +91,11 @@ export const closedAbove = (old: View, path: string) => {
     .map((_, i) => parts.slice(0, i + 1).join('/'))
     .filter(dir => (!old.dir || dir.startsWith(`${old.dir}/`)) && !old.expanded.includes(dir))
 }
+
+// The whole tree again after it showed only git's changed files: the folders that filter opened
+// close, and the ones the person had open stay open.
+export const unfiltered = (old: View): View =>
+  old.changed === null ? old : { ...old, changed: null, expanded: old.expanded.filter(dir => !old.changed!.includes(dir)) }
 
 // Whether the tree, showing the folder `dir`, has `path` in it: the project's top shows everything.
 export const isUnder = (dir: string, path: string) => !path.startsWith('../') && (dir === '' || path.startsWith(`${dir}/`))

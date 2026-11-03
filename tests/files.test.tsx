@@ -5,7 +5,7 @@ import { SVGS } from '../hooks/icon-svgs'
 import { fileIcon, folderIcon } from '../hooks/icons'
 import { rowsOf } from '../hooks/diff'
 import { EDIT } from '../hooks/look'
-import { rank, timeOf } from '../hooks/paths'
+import { nameAt, rank, timeOf } from '../hooks/paths'
 import { LOGGED_RETRY_AND_SLOWER_DELAY } from './git-diffs'
 
 const PANE = {
@@ -36,12 +36,14 @@ const asked = (path: string) => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/
 type GitWorld = { dirty: string[]; ahead: string; head?: string; shown?: string; isRefused?: boolean; diff?: string }
 
 // Each hook stands for the engine: a project at /proj with src/ and tests/, on branch main.
-// `ran` collects every command git is asked, with the folder it runs in.
+// `ran` collects every command git is asked, with the folder it runs in; `list`, given, answers
+// the listing of a folder in its place.
 const engine = (
   on: Parameters<TestBody>[1],
   git: GitWorld = { dirty: [' M src/client.js'], ahead: '0' },
   registered: string[] = [],
   ran: { argv: string[]; cwd?: string }[] = [],
+  list?: (path: string) => ReturnType<typeof entry>[],
 ) => {
   on('command.register', (_, e) => {
     registered.push((e as { name: string }).name)
@@ -59,6 +61,7 @@ const engine = (
   on('fs.list', (_, e) => {
     const path = (e as { path?: string }).path ?? ''
 
+    if (list) return { value: list(asked(path)) }
     if (path.endsWith('src')) return { value: [entry('client.js', 'file', 2048)] }
 
     return { value: [entry('README.md', 'file', 10), entry('src', 'dir'), entry('tests', 'dir'), entry('.env', 'file')] }
@@ -102,6 +105,10 @@ const reading = async (ui: { findAll: (q: { type: string }) => Promise<unknown> 
     .map(one => (one.text ?? '').replace(/ /g, ' ').trim())
     .filter(Boolean)
     .join(' ')
+
+// What the .. row says: the folder it leads up to.
+const upLabel = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) =>
+  ((await ui.findAll({ type: 'Button' })) as { props: { key?: string; label?: string } }[]).find(one => one.props.key === 'up')?.props.label
 
 // The folders' chevrons on a surface that paints, as each one's alt names it: `open` or `closed`.
 const chevrons = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) =>
@@ -538,7 +545,7 @@ test('a folder name wider than the pane gives way in the header, cut with an ell
   }
 })
 
-test('a press anywhere on a folder row opens it and closes it', async ($, on) => {
+test('a press anywhere on a folder row opens it, and a press on it open goes into it', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
@@ -557,7 +564,15 @@ test('a press anywhere on a folder row opens it and closes it', async ($, on) =>
 
   await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
+  expect(await upLabel(ui)).toBe('.. /')
+
+  // In src/, the .. row names the folder it leads back to, and src/ is shut there again.
   await ui.press({ key: 'fold:src' })
+  expect(await text(ui, /^client\.js$/)).toBe('client.js')
+  expect(await text(ui, /^README\.md$/)).toBeUndefined()
+  expect(await upLabel(ui)).toBe('.. proj')
+  await ui.press({ key: 'up' })
+  expect(await text(ui, /^README\.md$/)).toBe('README.md')
   expect(await text(ui, /^client\.js$/)).toBeUndefined()
   await ui.unmount()
 })
@@ -857,7 +872,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.unmount()
   })
 
-  test(`a press on "N changed" opens the tree to every changed file (${surface})`, async ($, on) => {
+  test(`a press on "N changed" shows only the changed files, opened to; a second press the whole tree (${surface})`, async ($, on) => {
     engine(on, { dirty: [' M src/client.js', ' M README.md'], ahead: '0' })
     await $.session.start({ cwd: '/proj', surface, isInteractive: true })
 
@@ -867,9 +882,38 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     await ui.press({ key: 'changed' })
     expect(await text(ui, /^client\.js$/)).toBe('client.js')
+    expect(await text(ui, /^README\.md$/)).toBe('README.md')
+    expect(await text(ui, /^tests$/)).toBeUndefined()
+    expect(await text(ui, /^CHANGED FILES$/)).toBe('CHANGED FILES')
+
+    // The folder it opened closes again; the rest of the tree is back.
+    await ui.press({ key: 'changed' })
+    expect(await text(ui, /^tests$/)).toBe('tests')
+    expect(await text(ui, /^client\.js$/)).toBeUndefined()
     await ui.unmount()
   })
 }
+
+test('in a big project "N changed" draws the changed files, not every file in their folders', async ($, on) => {
+  const names = Array.from({ length: 40 }, (_, i) => `part${String(i).padStart(2, '0')}`)
+  const files = Array.from({ length: 40 }, (_, i) => entry(`file${String(i).padStart(2, '0')}.ts`, 'file', 100))
+  engine(on, { dirty: [' M part07/file12.ts', ' M part31/file03.ts'], ahead: '0' }, [], [], path =>
+    path === '/proj' ? names.map(name => entry(name, 'dir')) : files,
+  )
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await settled()
+  await ui.press({ key: 'changed' })
+
+  const drawn = ((await ui.findAll({ type: 'Text' })) as { text?: string }[]).map(one => (one.text ?? '').trim()).filter(one => /^(part|file)\d\d/.test(one))
+  expect(drawn).toEqual(['part07', 'file12.ts', 'part31', 'file03.ts'])
+  // A folder opened by hand still lists everything in it.
+  await ui.press({ key: 'changed' })
+  await ui.press({ key: 'dir:part00' })
+  expect(await text(ui, /^file39\.ts$/)).toBe('file39.ts')
+  await ui.unmount()
+})
 
 test('a diff of several hunks reads line by line, each numbered where it is in the file', async ($, on) => {
   engine(on, { dirty: [' M src/client.js'], ahead: '0', diff: LOGGED_RETRY_AND_SLOWER_DELAY })
@@ -941,6 +985,14 @@ test('a diff reads as rows numbered where each line is, its shared indent taken 
     { kind: 'add', line: 11, text: 'return a + 1' },
     { kind: 'same', line: 12, text: '}' },
   ])
+})
+
+test('the .. row names the folder it leads to, above the project and on Windows too', () => {
+  expect(nameAt('/work/proj', '')).toBe('proj')
+  expect(nameAt('/work/proj', 'src/api')).toBe('api')
+  expect(nameAt('/work/proj', '..')).toBe('work')
+  expect(nameAt('/work/proj', '../..')).toBe('/')
+  expect(nameAt('C:/proj', '..')).toBe('C:')
 })
 
 test('search ranks a file by its name: the letters in order, together, at a word start', () => {
