@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, RenderInput, Space } from 'claude-code'
 
-import type { Menu, Touch, View } from '../types'
+import type { Menu, Pr, Touch, View } from '../types'
 import { absOf, cardSince, follow, reveal, toggleDiff } from './activity'
 import { rowsOf } from './diff'
 import { forget, indexFiles, listDir, redraw, refreshGit, sessionDir, SKIP } from './disk'
@@ -42,9 +42,10 @@ import { DEFAULT_VIEW, PANE } from './state'
 // uses it, so every file names its own; state.ts lists the tags they must all share.
 const diff = atom({ plugin: 'files-pane', key: 'diff' } as const, null, { shape: 'diff-2' })
 const earlier = atom({ plugin: 'files-pane', key: 'earlier' } as const, [], { shape: 'touched-3' })
-const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-4' })
+const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-5' })
 const menu = atom({ plugin: 'files-pane', key: 'menu' } as const, null, { shape: 'menu-2' })
 const now = atom({ plugin: 'files-pane', key: 'now' } as const, null, { shape: 'now-3' })
+const pr = atom({ plugin: 'files-pane', key: 'pr' } as const, null, { shape: 'pr-1' })
 const scope = atom({ plugin: 'files-pane', key: 'scope' } as const, 'turn', { shape: 'scope-1' })
 const isTouchedAll = atom({ plugin: 'files-pane', key: 'isTouchedAll' } as const, false)
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
@@ -56,6 +57,8 @@ const TREE_ROWS = 300
 const MATCHES = 50
 // The touched list shows its newest files up to this many, and offers the rest a press away.
 const TOUCHED_ROWS = 8
+// A pull request's pill, coloured as GitHub colours where it stands.
+const PR_COLORS: Record<Pr['state'], string> = { open: DONE, draft: MUTED, merged: READ, closed: REMOVED }
 
 // The surfaces whose pane held the keyboard while a file's menu was open. A click away from the
 // pane (into the chat, the prompt) takes the keyboard from it, and that closes the menu, as a
@@ -68,7 +71,7 @@ const focusedWithMenu = new Set<string>()
 // `ui.render` hook for the pane.
 export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const elements = $.ui.resolve(e)
-    const { Box, Text, Button } = elements
+    const { Box, Text, Button, Link } = elements
     // Search needs a text field and the icons an SVG, which not every surface draws.
     const Input = 'Input' in elements ? elements.Input : null
     // The terminal's table answers `in` for Svg too, but draws none: ask the surface.
@@ -84,7 +87,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         redraw($)
       })
     }
-    const [cur, list, prior, sc, isAll, v, g, open, acts, foot] = await Promise.all([
+    const [cur, list, prior, sc, isAll, v, g, found, open, acts, foot] = await Promise.all([
       read($, now),
       read($, touched),
       read($, earlier),
@@ -92,6 +95,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       read($, isTouchedAll),
       read($, view),
       read($, git),
+      read($, pr),
       read($, diff),
       read($, menu),
       read($, status),
@@ -543,7 +547,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // A rounded chip of a color's tint, a live one with a pulsing dot. It never shrinks, which would
     // wrap its label ("0 / files") in a narrow header.
     // Given a press, the pill is a control: it lights under the pointer, a press anywhere on it counts.
-    const pill = (label: string, color: string, isLive = false, press?: { key: string; onPress: () => unknown }) =>
+    // Given an `href`, its label is a link to it.
+    const pill = (label: string, color: string, isLive = false, press?: { key: string; onPress: () => unknown }, href?: string) =>
       isRich && (canLayer || !press) ? (
         <Box
           key={press ? `pill:${press.key}` : undefined}
@@ -558,7 +563,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         >
           {isLive && dot(color, true)}
           <Text color={color} size="footnote" weight="semibold">
-            {label}
+            {href ? <Link href={href}>{label}</Link> : label}
           </Text>
           {press && pressAnywhere(press.key, press.onPress)}
         </Box>
@@ -570,7 +575,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Button>
       ) : (
         <Text color={color} size="footnote" weight="semibold">
-          {` ${label} `}
+          {href ? [' ', <Link key="link" href={href}>{label}</Link>, ' '] : ` ${label} `}
         </Text>
       )
 
@@ -909,6 +914,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     if (!query) await walk(v.dir, 0)
 
     const totals = Object.values(g?.lines ?? {}).reduce<[number, number]>(([a, d], [x, y]) => [a + x, d + y], [0, 0])
+    // The pull request found for the branch shown: one found for a branch since left is not its.
+    const shownPr = g && found?.branch === g.branch ? found : null
 
     // A section's head: its name in small caps and, beside it, a quiet count or place, or controls.
     // In a narrow pane the name gives way first: its weight is far above the aside's, which shrinks
@@ -986,10 +993,12 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               paddingY={isRich ? xs : 0}
               flexWrap="wrap"
             >
-              <Box gap={xs} alignItems="center" overflow="hidden">
+              <Box gap={xs} alignItems="center" overflow="hidden" flexWrap="wrap">
                 {icon(BRANCH_SVG, 'branch', '⎇', READ, 16)}
                 <Text weight="semibold">{g.branch}</Text>
                 {g.ahead ? pill(`↑${g.ahead}`, DONE) : null}
+                {shownPr && pill(`#${shownPr.number} ${shownPr.state}`, PR_COLORS[shownPr.state], false, undefined, shownPr.url)}
+                {g.worktreeOf && pill(`worktree of ${g.worktreeOf}`, FOLDER)}
                 {pressAway('branch')}
               </Box>
               {g.changed.length === 0 ? (
@@ -1044,7 +1053,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Box gap={xs} flexWrap="wrap" paddingX={1} alignItems="center">
           {tool('refresh', '↻ Refresh', async () => {
             forget()
-            await refreshGit($)
+            await refreshGit($, true)
             await update($, tick, n => n + 1)
             redraw($)
           })}

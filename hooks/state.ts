@@ -15,7 +15,8 @@ export const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], 
 //   scope    'scope-1'    which of those the list shows: Scope
 //   isTouchedAll (none)   whether that list shows every file, past the newest few: boolean
 //   view     'view-4'     the tree's controls: View
-//   git      'git-4'      git's view of the project shown: Git | null
+//   git      'git-5'      git's view of the project shown: Git | null
+//   pr       'pr-1'       the pull request for the branch shown: Pr | null
 //   diff     'diff-2'     the diff open under a file's row: Diff | null
 //   menu     'menu-2'     the file whose actions are open, and their submenu: Menu | null
 //   status   'status-1'   the commit line at the pane's foot: Status | null

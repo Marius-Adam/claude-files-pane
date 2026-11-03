@@ -22,6 +22,8 @@ const READS = new Set(['Read'])
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 const COMMIT = /\bgit\s+(?:-C\s+(\S+)\s+)?commit\b/
 const CD = /(?:^|[;&|]\s*)cd\s+(\S+)/g
+// What may open, move or close the branch's pull request: a push, or GitHub's CLI acting on one.
+const PR_CHANGE = /\bgit\s+(?:-C\s+\S+\s+)?push\b|\bgh\s+pr\s+(?:create|merge|close|reopen|ready|edit)\b/
 
 // The file a tool call reads or edits, if it is one of those, slashed.
 export const touchOf = (e: { tool: string }) => {
@@ -89,6 +91,13 @@ export const commitDir = (e: { tool: string }, cwd: string) => {
   const dir = fromShell(cwd, slashed(unquoted))
 
   return isAbs(dir) ? dir : join(cwd, dir)
+}
+
+// Whether a tool call is a command that may have changed the branch's pull request (PR_CHANGE).
+export const changesPr = (e: { tool: string }) => {
+  const command = (e as unknown as Record<string, unknown>).command
+
+  return e.tool === 'Bash' && typeof command === 'string' && PR_CHANGE.test(command)
 }
 
 export const upsert = (list: Touch[], path: string, isEdit: boolean): Touch[] => {
