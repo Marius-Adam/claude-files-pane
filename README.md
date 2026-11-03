@@ -105,6 +105,8 @@ claude plugin uninstall files-pane@marius-adam
 
 **Privacy:** the pane is read-only. It lists folders, reads git and looks for your editors, sends nothing anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows). [SECURITY.md](SECURITY.md#what-the-pane-runs) lists every command it runs, and says how to report a vulnerability.
 
+**Tokens:** the pane costs none. Its hooks hand Claude's events on unchanged, and what it shows comes from your folders and git, so Claude never sees it. Only **@ Mention** adds to your prompt, the same as typing `@file`.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Troubleshooting
