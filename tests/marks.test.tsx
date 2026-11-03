@@ -68,8 +68,8 @@ const engine = (on: Parameters<TestBody>[1], world: { status: string[]; head: st
             ? world.status.map(line => `${line}\0`).join('')
             : argv.includes('ls-files')
               ? 'ignored/\0'
-              : argv.includes('rev-list')
-                ? '0\n'
+              : argv.includes('for-each-ref')
+                ? 'refs/remotes/origin/main\0\n'
                 : argv.includes('show')
                   ? 'shipped.txt\n'
                   : ''

@@ -25,23 +25,40 @@ export type View = {
   changed: string[] | null
 }
 
-// The branch, how far it is ahead of its upstream (null without one), the repository a linked
-// worktree belongs to (its folder's name; null outside one), the paths git reports as changed with
-// the letter each one gets and their added and removed line counts, and what it ignores (a folder
-// as `dir/`), all relative to the working directory.
+// The branch; its upstream (`set`, `unset` for a branch never pushed, `gone` once the branch it
+// tracked was deleted, null for a detached HEAD or a branch with no commit yet) and how far the
+// branch is ahead of it and behind it as of the last fetch (null without one); the repository a
+// linked worktree belongs to (its folder's name; null outside one); a rebase, merge, cherry-pick,
+// revert or bisect left in progress; the paths git reports as changed with the letter each one
+// gets and their added and removed line counts, and what it ignores (a folder as `dir/`), all
+// relative to the working directory.
 export type Git = {
   branch: string
+  upstream: 'set' | 'unset' | 'gone' | null
   ahead: number | null
+  behind: number | null
   worktreeOf: string | null
+  op: Op | null
   changed: string[]
   marks: Record<string, Mark>
   lines: Record<string, [number, number]>
   ignored: string[]
 }
 
+// What git is in the middle of, and for a rebase, which of its commits it is at out of how many.
+export type Op = { verb: 'rebasing' | 'merging' | 'cherry-picking' | 'reverting' | 'bisecting'; step: [number, number] | null }
+
 // The pull request GitHub's CLI finds for a branch: the branch it was asked for, its number, its
-// page and where it stands.
-export type Pr = { branch: string; number: number; url: string; state: 'open' | 'draft' | 'merged' | 'closed' }
+// page, where it stands, its checks counted by how each ended (or that it has not), and its review:
+// approved, changes requested, or neither yet.
+export type Pr = {
+  branch: string
+  number: number
+  url: string
+  state: 'open' | 'draft' | 'merged' | 'closed'
+  checks: { passed: number; failed: number; running: number }
+  review: 'approved' | 'changes' | null
+}
 
 // What git sees in a changed file, as VS Code's explorer letters it: modified, added, deleted,
 // renamed, untracked, or in conflict.

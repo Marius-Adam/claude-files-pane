@@ -1,14 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { Git, Mark, Pr } from '../types'
+import type { Git, Mark, Op, Pr } from '../types'
 import { base, dirOf, join, listPath, slashed, unfiltered } from './paths'
 import { DEFAULT_VIEW } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
 // uses it, so every file names its own; state.ts lists the tags they must all share.
-const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-5' })
-const pr = atom({ plugin: 'files-pane', key: 'pr' } as const, null, { shape: 'pr-1' })
+const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-6' })
+const pr = atom({ plugin: 'files-pane', key: 'pr' } as const, null, { shape: 'pr-2' })
 const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-4' })
 
 // What the pane reads of the disk: git's view of the project shown, the branch's pull request,
@@ -122,8 +122,8 @@ export function listDir($: EngineInterface, path: string) {
   return listing
 }
 
-// The branch, and where the folder sits in its repository (`sub/`, or nothing at the top); null
-// outside a repository. `--abbrev-ref` reads HEAD's commit, which a repository without one yet does
+// The branch, where the folder sits in its repository (`sub/`, or nothing at the top), and whether
+// HEAD is detached; null outside a repository. `--abbrev-ref` reads HEAD's commit, which a repository without one yet does
 // not have: then the branch is the one HEAD names. A detached HEAD names no branch, only its commit.
 async function placeOf($: EngineInterface, at: string | undefined) {
   const head = await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD', '--show-prefix'], 5000, at)
@@ -131,7 +131,9 @@ async function placeOf($: EngineInterface, at: string | undefined) {
   if (head && head.exitCode === 0) {
     const [branch = '', prefix = ''] = head.stdout.split('\n')
 
-    return { branch: branch === 'HEAD' ? ((await headOf($, at ?? '')) ?? branch) : branch, prefix }
+    const isDetached = branch === 'HEAD'
+
+    return { branch: isDetached ? ((await headOf($, at ?? '')) ?? branch) : branch, prefix, isDetached }
   }
 
   const [unborn, place] = await Promise.all([
@@ -141,21 +143,64 @@ async function placeOf($: EngineInterface, at: string | undefined) {
 
   if (!unborn || unborn.exitCode !== 0 || !place || place.exitCode !== 0) return null
 
-  return { branch: unborn.stdout.trim(), prefix: place.stdout.split('\n')[0] ?? '' }
+  return { branch: unborn.stdout.trim(), prefix: place.stdout.split('\n')[0] ?? '', isDetached: false }
 }
 
-// The repository a linked worktree belongs to, by its folder's name, from its git directory and the
-// one its worktrees share (`--git-dir --git-common-dir`): those differ only in a linked worktree,
-// whose own sits under the shared one's `worktrees/`. A repository's shared one is `repo/.git`, or
-// for a bare one `repo.git`. Null in the main worktree, or a git too old for `--path-format` (2.31).
-function worktreeOf(dirs: Awaited<ReturnType<typeof run>>) {
-  if (!dirs || dirs.exitCode !== 0) return null
+// The worktree's own git directory and the one its worktrees share (`--git-dir --git-common-dir`),
+// absolute; empty with a git too old for `--path-format` (2.31).
+function gitDirsOf(dirs: Awaited<ReturnType<typeof run>>) {
+  const [own = '', shared = ''] = dirs && dirs.exitCode === 0 ? dirs.stdout.split('\n').map(line => slashed(line.trim())) : []
 
-  const [own = '', shared = ''] = dirs.stdout.split('\n').map(line => slashed(line.trim()))
+  return { own, shared }
+}
 
+// The repository a linked worktree belongs to, by its folder's name. Its own git directory and the
+// shared one differ only in a linked worktree, whose own sits under the shared one's `worktrees/`.
+// A repository's shared one is `repo/.git`, or for a bare one `repo.git`. Null in the main worktree.
+function worktreeOf({ own, shared }: { own: string; shared: string }) {
   if (!own || !shared || own === shared) return null
 
   return base(shared) === '.git' ? base(dirOf(shared)) : base(shared).replace(/\.git$/, '')
+}
+
+// The branch's upstream and how far apart the two are, from `for-each-ref`'s
+// `%(upstream)%00%(upstream:track,nobracket)`: the upstream's ref, then `ahead 1, behind 2`, or
+// `gone` once it was deleted, or nothing when they are level. A branch with no commit yet is no ref,
+// and prints nothing at all; a detached HEAD is never asked.
+function trackOf(out: Awaited<ReturnType<typeof run>>): Pick<Git, 'upstream' | 'ahead' | 'behind'> {
+  const [ref, track = ''] = out && out.exitCode === 0 && out.stdout.trim() ? out.stdout.trim().split('\0') : []
+  const count = (pattern: RegExp) => Number(track.match(pattern)?.[1] ?? 0)
+
+  if (ref === undefined) return { upstream: null, ahead: null, behind: null }
+  if (!ref) return { upstream: 'unset', ahead: null, behind: null }
+  if (track === 'gone') return { upstream: 'gone', ahead: null, behind: null }
+
+  return { upstream: 'set', ahead: count(/ahead (\d+)/), behind: count(/behind (\d+)/) }
+}
+
+// What git was left in the middle of, from the files it keeps in the worktree's own git directory
+// while it is: a rebase's step counts there too (`msgnum` of `end`, or `next` of `last`).
+const OPS: [string, Op['verb']][] = [
+  ['rebase-merge', 'rebasing'],
+  ['rebase-apply', 'rebasing'],
+  ['MERGE_HEAD', 'merging'],
+  ['CHERRY_PICK_HEAD', 'cherry-picking'],
+  ['REVERT_HEAD', 'reverting'],
+  ['BISECT_LOG', 'bisecting'],
+]
+
+async function opOf($: EngineInterface, gitDir: string): Promise<Op | null> {
+  if (!gitDir) return null
+
+  const names = new Set((await $.fs.list(gitDir).catch(() => [])).map(entry => entry.name))
+  const [name, verb] = OPS.find(([one]) => names.has(one)) ?? []
+
+  if (!name || !verb) return null
+
+  const steps = name === 'rebase-merge' ? ['msgnum', 'end'] : name === 'rebase-apply' ? ['next', 'last'] : null
+  const [at, of] = steps ? await Promise.all(steps.map(file => $.fs.read(join(gitDir, `${name}/${file}`)).then(Number, () => NaN))) : []
+
+  return { verb, step: at && of ? [at, of] : null }
 }
 
 // Git as the project shown sees it: `root`, or the session's folder when empty. Paths come
@@ -168,11 +213,11 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
 
   if (!where) return null
 
-  const { branch, prefix } = where
-  const [state, numstat, ahead, dirs, ignored] = await Promise.all([
+  const { branch, prefix, isDetached } = where
+  const [state, numstat, track, dirs, ignored] = await Promise.all([
     run($, ['git', 'status', '--porcelain', '-z', '-uall'], 10000, at),
     run($, ['git', 'diff', '--numstat', '-z', '--relative', 'HEAD'], 10000, at),
-    run($, ['git', 'rev-list', '--count', '@{u}..HEAD'], 5000, at),
+    isDetached ? null : run($, ['git', 'for-each-ref', '--format=%(upstream)%00%(upstream:track,nobracket)', `refs/heads/${branch}`], 5000, at),
     run($, ['git', 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], 5000, at),
     // `--directory` names an ignored folder once, as `node_modules/`, not every file in it.
     run($, ['git', 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'], 10000, at),
@@ -212,10 +257,13 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
     if (path && /^\d+$/.test(added ?? '') && /^\d+$/.test(removed ?? '')) lines[path] = [Number(added), Number(removed)]
   }
 
+  const gitDirs = gitDirsOf(dirs)
+
   return {
     branch: branch.trim(),
-    ahead: ahead && ahead.exitCode === 0 ? Number(ahead.stdout.trim()) || 0 : null,
-    worktreeOf: worktreeOf(dirs),
+    ...trackOf(track),
+    worktreeOf: worktreeOf(gitDirs),
+    op: await opOf($, gitDirs.own),
     changed,
     marks,
     lines,
@@ -224,14 +272,19 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
 }
 
 // How long a pull request found stands before git's next read asks GitHub again, as one can be
-// merged or closed outside the session.
+// merged or closed outside the session. While its checks run, it is asked again this often by
+// itself, with or without a read, until they end.
 const PR_MS = 2 * 60 * 1000
+const PR_RUNNING_MS = 30 * 1000
 
-// Which branch the pull request was last asked for (`root` and the branch, NUL between), and when.
+// Which branch the pull request was last asked for (`root` and the branch, NUL between), when, and
+// the wait before it is asked again while its checks run.
 let prAsked = ''
 let prAt = 0
+let prAgain: { cancel: () => void } | null = null
 
 const PR_STATES: Record<string, Pr['state']> = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' }
+const REVIEWS: Record<string, Pr['review']> = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes' }
 
 // The branch's pull request, as GitHub's CLI finds it. It is asked over the network, so never on
 // git's own read: only for a branch not asked for yet, once PR_MS have passed, or when Claude's
@@ -244,6 +297,8 @@ async function lookUpPr($: EngineInterface, root: string, branch: string | null)
 
   prAsked = asked
   prAt = Date.now()
+  prAgain?.cancel()
+  prAgain = null
 
   const found = branch === null ? null : await prOf($, root, branch)
 
@@ -251,11 +306,60 @@ async function lookUpPr($: EngineInterface, root: string, branch: string | null)
 
   await update($, pr, () => found)
   redraw($)
+
+  if (found?.checks.running && (found.state === 'open' || found.state === 'draft')) {
+    prAgain = $.clock.after(PR_RUNNING_MS, () => {
+      if (prAsked !== asked) return
+
+      prAt = 0
+      void lookUpPr($, root, branch).catch(() => {})
+    })
+  }
+}
+
+// A check as `statusCheckRollup` lists it: a GitHub Actions job or app check (CheckRun), or a
+// commit status another service set (StatusContext).
+type Check = {
+  __typename?: string
+  name?: string
+  workflowName?: string
+  status?: string
+  conclusion?: string
+  context?: string
+  state?: string
+  startedAt?: string
+}
+
+const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'ERROR'])
+
+// The checks counted by how they ended. A check run again is listed once a run: only its latest
+// counts. A skipped one is not counted.
+function checksOf(rollup: unknown): Pr['checks'] {
+  const latest = new Map<string, Check>()
+
+  for (const check of Array.isArray(rollup) ? (rollup as Check[]) : []) {
+    const name = check.__typename === 'StatusContext' ? (check.context ?? '') : `${check.workflowName ?? ''}/${check.name ?? ''}`
+    const seen = latest.get(name)
+
+    if (!seen || (check.startedAt ?? '') >= (seen.startedAt ?? '')) latest.set(name, check)
+  }
+
+  const checks = { passed: 0, failed: 0, running: 0 }
+
+  for (const check of latest.values()) {
+    const ended = check.__typename === 'StatusContext' ? check.state : check.status === 'COMPLETED' ? check.conclusion : undefined
+
+    if (ended === undefined || ended === 'PENDING' || ended === 'EXPECTED') checks.running++
+    else if (FAILED.has(ended)) checks.failed++
+    else if (ended !== 'SKIPPED') checks.passed++
+  }
+
+  return checks
 }
 
 async function prOf($: EngineInterface, root: string, branch: string): Promise<Pr | null> {
   const out = await $.process
-    .run(['gh', 'pr', 'view', '--json', 'number,url,state,isDraft'], {
+    .run(['gh', 'pr', 'view', '--json', 'number,url,state,isDraft,reviewDecision,statusCheckRollup'], {
       timeoutMs: 10000,
       env: { GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' },
       ...(root ? { cwd: root } : {}),
@@ -265,11 +369,18 @@ async function prOf($: EngineInterface, root: string, branch: string): Promise<P
   if (!out || out.exitCode !== 0) return null
 
   try {
-    const { number, url, state, isDraft } = JSON.parse(out.stdout) as { number?: unknown; url?: unknown; state?: unknown; isDraft?: unknown }
+    const { number, url, state, isDraft, reviewDecision, statusCheckRollup } = JSON.parse(out.stdout) as Record<string, unknown>
 
     if (typeof number !== 'number' || typeof url !== 'string' || typeof state !== 'string' || !PR_STATES[state]) return null
 
-    return { branch, number, url, state: isDraft === true && state === 'OPEN' ? 'draft' : PR_STATES[state] }
+    return {
+      branch,
+      number,
+      url,
+      state: isDraft === true && state === 'OPEN' ? 'draft' : PR_STATES[state],
+      checks: checksOf(statusCheckRollup),
+      review: (typeof reviewDecision === 'string' && REVIEWS[reviewDecision]) || null,
+    }
   } catch {
     return null
   }
