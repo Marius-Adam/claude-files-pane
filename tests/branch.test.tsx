@@ -19,6 +19,10 @@ const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 
 const entry = (name: string, kind: 'file' | 'dir') => ({ name, kind, size: 0, mtimeMs: 0, isLink: false })
 
+// A path the pane listed or read, as it asked for it. The test engine resolves one against the
+// system it runs on, and on Windows `/proj/.git` comes as `D:\proj\.git`.
+const asked = (path: string) => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
+
 // What the GitHub CLI answers `gh pr view --json number,url,state,isDraft,reviewDecision,
 // statusCheckRollup`: a pull request as it prints one (copied from a real run; `checks` are its
 // rollup's entries, `review` its reviewDecision), `none` as it exits when the branch has none (or the
@@ -56,7 +60,7 @@ const engine = (on: Parameters<TestBody>[1], world: World, ran: string[][] = [])
   on('tool.call', () => ({ result: {} }))
   on('clock.after', (_, e) => new Promise(resolve => waits.push({ ms: (e as { ms: number }).ms, end: () => resolve({ value: undefined }) })))
   on('fs.list', (_, e) => {
-    const path = (e as { path?: string }).path ?? ''
+    const path = asked((e as { path?: string }).path ?? '')
 
     if (path === gitDir()) {
       const names = new Set(Object.keys(world.gitDir ?? {}).map(file => file.split('/')[0]!))
@@ -67,7 +71,7 @@ const engine = (on: Parameters<TestBody>[1], world: World, ran: string[][] = [])
     return path.endsWith('src') ? { value: [entry('client.js', 'file')] } : { value: [entry('src', 'dir')] }
   })
   on('fs.read', (_, e) => {
-    const path = (e as { path: string }).path
+    const path = asked((e as { path: string }).path)
     const found = Object.entries(world.gitDir ?? {}).find(([file]) => path === `${gitDir()}/${file}`)
 
     if (!found) throw new Error('ENOENT')
@@ -186,15 +190,15 @@ test('the pull request Claude opens shows once its `gh pr create` returns, and o
 
   expect(await text(ui, /^#\d+/)).toBeUndefined()
 
-  const asked = ghRuns(ran)
+  const before = ghRuns(ran)
   await $.tool.call({ tool: 'Bash', command: 'npm test' })
   await settled()
-  expect(ghRuns(ran)).toBe(asked)
+  expect(ghRuns(ran)).toBe(before)
 
   world.gh = { number: 43, state: 'OPEN', isDraft: false }
   await $.tool.call({ tool: 'Bash', command: 'git push -u origin fix/timeout && gh pr create --base staging --fill' })
   await settled()
-  expect(ghRuns(ran)).toBe(asked + 1)
+  expect(ghRuns(ran)).toBe(before + 1)
   expect(await text(ui, /#43 open/)).toMatch(/#43 open/)
   expect(await hrefs(ui)).toContain('https://github.com/someone/shop/pull/43')
   await ui.unmount()
@@ -277,13 +281,13 @@ test('running checks are asked about again by themselves until they end', async 
   expect(await text(ui, /checks running/)).toMatch(/checks running/)
   expect(waits.map(wait => wait.ms)).toContain(30000)
 
-  const asked = ghRuns(ran)
+  const before = ghRuns(ran)
   world.gh = { number: 7, state: 'OPEN', isDraft: true, checks: [job('test (ubuntu-latest)', 'COMPLETED', 'SUCCESS')] }
   const pending = waits.length
   waits.find(wait => wait.ms === 30000)!.end()
   await settled()
 
-  expect(ghRuns(ran)).toBe(asked + 1)
+  expect(ghRuns(ran)).toBe(before + 1)
   expect(await text(ui, /✓ checks pass/)).toMatch(/✓ checks pass/)
   expect(waits.slice(pending).filter(wait => wait.ms === 30000)).toEqual([])
   await ui.unmount()
