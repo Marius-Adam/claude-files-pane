@@ -51,7 +51,7 @@
 - **Live card**: Claude's thinking, the command it runs, the file it reads or edits
 - **Tree that follows Claude**: opens to each file it edits, even in another project
 - **Touched list**: files read or edited this turn or session, with lines added and removed
-- **Git**: branch, commits ahead, its pull request, the worktree you're in, changed files, ignored files dimmed
+- **Git**: branch, commits ahead and behind, its pull request with its checks and review, the worktree you're in, a rebase or merge in progress with its conflicts, changed files, ignored files dimmed
 - **Search** with VS Code's icons, best matches first
 - Works in the desktop app, VS Code and the terminal
 

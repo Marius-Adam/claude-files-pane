@@ -105,8 +105,8 @@ const engine = (on: Parameters<TestBody>[1], installed: Installed = {}) => {
             ? `${head}\n`
           : argv.includes('status')
             ? ' M src/client.js\0'
-            : argv.includes('rev-list')
-              ? '0\n'
+            : argv.includes('for-each-ref')
+              ? 'refs/remotes/origin/main\0\n'
               : ''
 
     return { value: { exitCode: argv[0] === 'explorer' ? 1 : 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }

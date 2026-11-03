@@ -81,8 +81,8 @@ const engine = (
             ? (git.diff ?? 'diff --git a/src/client.js b/src/client.js\n--- a/src/client.js\n+++ b/src/client.js\n@@ -1 +1 @@\n-a\n+b\n')
           : argv.includes('--numstat')
             ? git.dirty.length > 0 ? '1\t1\tsrc/client.js\n' : ''
-            : argv.includes('rev-list')
-              ? `${git.ahead}\n`
+            : argv.includes('for-each-ref')
+              ? `refs/remotes/origin/main\0${git.ahead === '0' ? '' : `ahead ${git.ahead}`}\n`
               : argv.includes('show')
                 ? `${git.shown ?? 'src/client.js'}\n`
                 : ''

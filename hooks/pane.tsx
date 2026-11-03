@@ -42,10 +42,10 @@ import { DEFAULT_VIEW, PANE } from './state'
 // uses it, so every file names its own; state.ts lists the tags they must all share.
 const diff = atom({ plugin: 'files-pane', key: 'diff' } as const, null, { shape: 'diff-2' })
 const earlier = atom({ plugin: 'files-pane', key: 'earlier' } as const, [], { shape: 'touched-3' })
-const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-5' })
+const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-6' })
 const menu = atom({ plugin: 'files-pane', key: 'menu' } as const, null, { shape: 'menu-2' })
 const now = atom({ plugin: 'files-pane', key: 'now' } as const, null, { shape: 'now-3' })
-const pr = atom({ plugin: 'files-pane', key: 'pr' } as const, null, { shape: 'pr-1' })
+const pr = atom({ plugin: 'files-pane', key: 'pr' } as const, null, { shape: 'pr-2' })
 const scope = atom({ plugin: 'files-pane', key: 'scope' } as const, 'turn', { shape: 'scope-1' })
 const isTouchedAll = atom({ plugin: 'files-pane', key: 'isTouchedAll' } as const, false)
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
@@ -915,7 +915,19 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
     const totals = Object.values(g?.lines ?? {}).reduce<[number, number]>(([a, d], [x, y]) => [a + x, d + y], [0, 0])
     // The pull request found for the branch shown: one found for a branch since left is not its.
+    // Its checks and review matter only while it is open.
     const shownPr = g && found?.branch === g.branch ? found : null
+    const isPrOpen = shownPr?.state === 'open' || shownPr?.state === 'draft'
+    // A failing check outweighs one still running, which outweighs the rest passing.
+    const checksPill = ({ passed, failed, running }: Pr['checks']) =>
+      failed > 0
+        ? pill(`✗ ${failed} failing`, REMOVED)
+        : running > 0
+          ? pill('◌ checks running', DIRTY, true)
+          : passed > 0
+            ? pill('✓ checks pass', DONE)
+            : null
+    const conflicts = Object.values(g?.marks ?? {}).filter(mark => mark === 'C').length
 
     // A section's head: its name in small caps and, beside it, a quiet count or place, or controls.
     // In a narrow pane the name gives way first: its weight is far above the aside's, which shrinks
@@ -996,8 +1008,16 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               <Box gap={xs} alignItems="center" overflow="hidden" flexWrap="wrap">
                 {icon(BRANCH_SVG, 'branch', '⎇', READ, 16)}
                 <Text weight="semibold">{g.branch}</Text>
+                {g.op && pill(g.op.step ? `${g.op.verb} ${g.op.step[0]}/${g.op.step[1]}` : g.op.verb, EDIT)}
+                {conflicts > 0 && pill(plural(conflicts, 'conflict'), REMOVED)}
                 {g.ahead ? pill(`↑${g.ahead}`, DONE) : null}
+                {g.behind ? pill(`↓${g.behind}`, TOOL) : null}
+                {g.upstream === 'unset' && pill('not pushed', MUTED)}
+                {g.upstream === 'gone' && pill('upstream gone', MUTED)}
                 {shownPr && pill(`#${shownPr.number} ${shownPr.state}`, PR_COLORS[shownPr.state], false, undefined, shownPr.url)}
+                {isPrOpen && checksPill(shownPr.checks)}
+                {isPrOpen && shownPr.review === 'approved' && pill('approved', DONE)}
+                {isPrOpen && shownPr.review === 'changes' && pill('changes requested', REMOVED)}
                 {g.worktreeOf && pill(`worktree of ${g.worktreeOf}`, FOLDER)}
                 {pressAway('branch')}
               </Box>
