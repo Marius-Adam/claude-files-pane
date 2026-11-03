@@ -9,6 +9,10 @@ on:
     branches: [main, staging]
   pull_request:
 
+# Nothing here writes to the repository, so the token gets read access only.
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -16,14 +20,28 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
+        claude-code: [latest]
+        include:
+          # The oldest Claude Code the mod loads on: 2.1.296 and older fail to load its hooks module,
+          # so the pane never appears. Raise it with the README's Prerequisites when a change needs
+          # a newer one.
+          - os: ubuntu-latest
+            claude-code: 2.1.299
     runs-on: ${{ matrix.os }}
+    env:
+      # The version installed is the one tested: it does not update itself during the run.
+      DISABLE_AUTOUPDATER: 1
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Actions are pinned to a commit, as a tag can be moved; Dependabot keeps them current.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token is not left in the clone's git config.
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+        run: npm install -g @anthropic-ai/claude-code@${{ matrix.claude-code }}
       - name: Validate the mod
         run: claude plugin validate .
       - name: Run the tests
