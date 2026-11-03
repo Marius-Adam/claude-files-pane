@@ -98,6 +98,7 @@ claude plugin uninstall files-pane@marius-adam
 ## Usage
 
 - `/files` brings the pane back if you close it.
+- A press on a folder opens it; a press on an open folder goes into it, and the **..** row, named for the folder above, leads back.
 - **N changed** shows only the files git reports changed, in their folders; press it again for the whole tree.
 - Colours tell you what happened to a file: read **purple**, edited **orange**, uncommitted **yellow**, committed **green**.
 - A file's **⋯** menu can `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor, Finder or Explorer.

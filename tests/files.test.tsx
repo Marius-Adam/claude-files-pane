@@ -5,7 +5,7 @@ import { SVGS } from '../hooks/icon-svgs'
 import { fileIcon, folderIcon } from '../hooks/icons'
 import { rowsOf } from '../hooks/diff'
 import { EDIT } from '../hooks/look'
-import { rank, timeOf } from '../hooks/paths'
+import { nameAt, rank, timeOf } from '../hooks/paths'
 import { LOGGED_RETRY_AND_SLOWER_DELAY } from './git-diffs'
 
 const PANE = {
@@ -105,6 +105,10 @@ const reading = async (ui: { findAll: (q: { type: string }) => Promise<unknown> 
     .map(one => (one.text ?? '').replace(/ /g, ' ').trim())
     .filter(Boolean)
     .join(' ')
+
+// What the .. row says: the folder it leads up to.
+const upLabel = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) =>
+  ((await ui.findAll({ type: 'Button' })) as { props: { key?: string; label?: string } }[]).find(one => one.props.key === 'up')?.props.label
 
 // The folders' chevrons on a surface that paints, as each one's alt names it: `open` or `closed`.
 const chevrons = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) =>
@@ -541,7 +545,7 @@ test('a folder name wider than the pane gives way in the header, cut with an ell
   }
 })
 
-test('a press anywhere on a folder row opens it and closes it', async ($, on) => {
+test('a press anywhere on a folder row opens it, and a press on it open goes into it', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
@@ -560,7 +564,15 @@ test('a press anywhere on a folder row opens it and closes it', async ($, on) =>
 
   await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
+  expect(await upLabel(ui)).toBe('.. /')
+
+  // In src/, the .. row names the folder it leads back to, and src/ is shut there again.
   await ui.press({ key: 'fold:src' })
+  expect(await text(ui, /^client\.js$/)).toBe('client.js')
+  expect(await text(ui, /^README\.md$/)).toBeUndefined()
+  expect(await upLabel(ui)).toBe('.. proj')
+  await ui.press({ key: 'up' })
+  expect(await text(ui, /^README\.md$/)).toBe('README.md')
   expect(await text(ui, /^client\.js$/)).toBeUndefined()
   await ui.unmount()
 })
@@ -973,6 +985,14 @@ test('a diff reads as rows numbered where each line is, its shared indent taken 
     { kind: 'add', line: 11, text: 'return a + 1' },
     { kind: 'same', line: 12, text: '}' },
   ])
+})
+
+test('the .. row names the folder it leads to, above the project and on Windows too', () => {
+  expect(nameAt('/work/proj', '')).toBe('proj')
+  expect(nameAt('/work/proj', 'src/api')).toBe('api')
+  expect(nameAt('/work/proj', '..')).toBe('work')
+  expect(nameAt('/work/proj', '../..')).toBe('/')
+  expect(nameAt('C:/proj', '..')).toBe('C:')
 })
 
 test('search ranks a file by its name: the letters in order, together, at a word start', () => {
