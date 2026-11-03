@@ -13,7 +13,7 @@ const earlier = atom({ plugin: 'files-pane', key: 'earlier' } as const, [], { sh
 const now = atom({ plugin: 'files-pane', key: 'now' } as const, null, { shape: 'now-3' })
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
 const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-3' })
-const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-3' })
+const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-4' })
 
 // What Claude is doing and what it touched: the card's state, the touched list, the tree following
 // Claude between projects, and what a commit changes.
