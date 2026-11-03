@@ -105,7 +105,7 @@ test('with no commit yet, a staged file’s Diff shows the whole file as added',
   await ui.press({ key: 'diff:touched:/proj/src/client.js' })
   expect(await text(ui, /No changes since the last commit/)).toBeUndefined()
   expect(await text(ui, /export const retry = 3/)).toMatch(/export const retry = 3/)
-  // The Diff (`-U2`) never asks git for a HEAD there is not.
-  expect(ran.some(argv => argv.includes('-U2') && argv.includes('HEAD'))).toBe(false)
+  // The Diff (`-U2`) asks for HEAD, finds none (git exits 128), and reads the file whole instead.
+  expect(ran.filter(argv => argv.includes('-U2')).map(argv => (argv.includes('--no-index') ? 'whole' : 'HEAD'))).toEqual(['HEAD', 'whole'])
   await ui.unmount()
 })

@@ -302,13 +302,13 @@ export async function diffOf($: EngineInterface, abs: string): Promise<{ text: s
 
   if (!(await isTrusted($, dir))) return { text: '', more: 0 }
 
-  const [tracked, head] = await Promise.all([run($, ['git', 'ls-files', '--error-unmatch', '--', abs], 5000, dir), headOf($, dir)])
-  const argv =
-    tracked && tracked.exitCode === 0 && head !== null
-      ? ['git', 'diff', '--no-color', '--no-ext-diff', '-U2', 'HEAD', '--', abs]
-      : ['git', 'diff', '--no-color', '--no-ext-diff', '-U2', '--no-index', '--', '/dev/null', abs]
+  const tracked = await run($, ['git', 'ls-files', '--error-unmatch', '--', abs], 5000, dir)
+  const whole = ['git', 'diff', '--no-color', '--no-ext-diff', '-U2', '--no-index', '--', '/dev/null', abs]
+  // A tracked file is diffed against HEAD; before the first commit there is none, git exits 128, and
+  // the file is new. (Asked first, a slow HEAD read would show a tracked file as wholly added.)
+  const sinceHead = tracked && tracked.exitCode === 0 ? await run($, ['git', 'diff', '--no-color', '--no-ext-diff', '-U2', 'HEAD', '--', abs], 10000, dir) : null
   // `--no-index` exits 1 when the files differ, which they always do: its output is what counts.
-  const out = (await run($, argv, 10000, dir))?.stdout ?? ''
+  const out = (sinceHead && sinceHead.exitCode !== 128 ? sinceHead : await run($, whole, 10000, dir))?.stdout ?? ''
   const all = out.split('\n').map(printable)
   const start = all.findIndex(line => line.startsWith('@@'))
 
