@@ -1,12 +1,14 @@
-# Validates the mod and runs its tests on every push and pull request, on macOS, Linux and Windows,
-# and keeps main fed only from staging. Validation and tests run without a login.
+# Validates the mod and runs its tests on every pull request and every push to main, on macOS, Linux
+# and Windows, and keeps main fed only from staging. Staging takes only merged pull requests, each
+# tested as one, and its head is the release pull request's head, so a push there would run twice.
+# Validation and tests run without a login.
 # Type-checking needs the API types Claude Code writes when it loads the mod, so it stays local:
 # `npx -p typescript tsc -p . --noEmit` (see the README's Develop section).
 name: Check
 
 on:
   push:
-    branches: [main, staging]
+    branches: [main]
   pull_request:
 
 # Nothing here writes to the repository, so the token gets read access only.
