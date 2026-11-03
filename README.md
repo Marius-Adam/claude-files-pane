@@ -100,7 +100,7 @@ claude plugin uninstall files-pane@marius-adam
 - Colours tell you what happened to a file: read **purple**, edited **orange**, uncommitted **yellow**, committed **green**.
 - A file's **⋯** menu can `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor, Finder or Explorer.
 
-**Privacy:** the pane is read-only. It lists folders, runs read-only git (`status`, `diff`, `rev-parse`, `ls-files`, `rev-list`, `show`) and checks which editors are installed (on Windows, with `where` and by reading the editor's `.cmd` script). It sends nothing anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows).
+**Privacy:** the pane is read-only. It lists folders, runs read-only git (`status`, `diff`, `rev-parse`, `symbolic-ref`, `ls-files`, `rev-list`, `show`) and checks which editors are installed (on Windows, with `where` and by reading the editor's `.cmd` script). It sends nothing anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
