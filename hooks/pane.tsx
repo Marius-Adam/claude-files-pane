@@ -66,6 +66,11 @@ const PR_COLORS: Record<Pr['state'], string> = { open: DONE, draft: MUTED, merge
 // closes nothing on the desktop.
 const focusedWithMenu = new Set<string>()
 
+// Two presses on one folder's row this close together are a double click: a press carries no click
+// count, so the pane times them itself.
+const DOUBLE_MS = 400
+let folderPress: { path: string; at: number } | null = null
+
 // The pane: the card saying what Claude is doing, git's line, search, the toolbar, the files Claude
 // touched and the project's tree, each file with its actions behind a ⋯. Drawn by register.tsx's
 // `ui.render` hook for the pane.
@@ -135,9 +140,19 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       redraw($)
     }
 
-    // A press on a closed folder's row opens it in place; on an open one, goes into it: the tree
-    // then shows that folder, with the .. row above leading back. Its caret only opens and closes it.
-    const openOrEnter = async (path: string) => (v.expanded.includes(path) ? setView({ dir: path }) : toggle(path))
+    // A press on a folder's row opens or shuts it in place, as its caret does; a double click goes
+    // into it: the tree then shows that folder, with the .. row above leading back. The double
+    // click's first press opened or shut it, so going in puts that back.
+    const openOrEnter = async (path: string) => {
+      const at = await $.clock.now()
+      const since = folderPress?.path === path ? at - folderPress.at : -1
+      folderPress = { path, at }
+      if (since < 0 || since >= DOUBLE_MS) return toggle(path)
+
+      folderPress = null
+      await toggle(path)
+      await setView({ dir: path })
+    }
 
     // A file's actions, behind the ⋯ at the end of its row: open under the row for one file at a
     // time, in the list it was pressed in. A diff belongs to the actions it was opened from.
@@ -248,7 +263,6 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           paddingX={0}
           paddingY={0}
           flexShrink={0}
-          hover={{ backgroundColor: state === 'on' ? tint(FOLDER, '2e') : HOVER }}
         >
           {button}
         </Box>
@@ -546,7 +560,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
     // A rounded chip of a color's tint, a live one with a pulsing dot. It never shrinks, which would
     // wrap its label ("0 / files") in a narrow header.
-    // Given a press, the pill is a control: it lights under the pointer, a press anywhere on it counts.
+    // Given a press, the pill is a control: a press anywhere on it counts.
     // Given an `href`, its label is a link to it.
     const pill = (label: string, color: string, isLive = false, press?: { key: string; onPress: () => unknown }, href?: string) =>
       isRich && (canLayer || !press) ? (
@@ -559,7 +573,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           gap={xs}
           alignItems="center"
           flexShrink={0}
-          {...(press ? { overflow: 'hidden', hover: { backgroundColor: tint(color, '3d') } } : {})}
+          {...(press ? { overflow: 'hidden' } : {})}
         >
           {isLive && dot(color, true)}
           <Text color={color} size="footnote" weight="semibold">
@@ -803,7 +817,6 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               paddingX={1}
               paddingY={0}
               overflow="hidden"
-              hover={{ backgroundColor: HOVER }}
             >
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
                 {/* The chevron sits close to the folder's icon; a press on it or the name opens it. */}
@@ -862,7 +875,6 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               paddingY={0}
               backgroundColor={background}
               overflow="hidden"
-              hover={{ backgroundColor: background ?? HOVER }}
             >
               {touch?.isActive && shimmer(accentOf(touch))}
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
@@ -896,7 +908,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // The way up, the tree's first row: the folder above the one shown, past the project's top too,
     // by its name.
     const upRow = (
-      <Box key="row:.." {...rounded()} alignItems="center" gap={1} paddingX={1} paddingY={0} overflow="hidden" hover={{ backgroundColor: HOVER }}>
+      <Box key="row:.." {...rounded()} alignItems="center" gap={1} paddingX={1} paddingY={0} overflow="hidden">
         <Box gap={xs} alignItems="center">
           {chevron()}
           {icon(folderIcon('..', false), 'up', '▪', MUTED, 16)}
@@ -1143,7 +1155,6 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 paddingRight={0}
                 paddingY={0}
                 overflow="hidden"
-                hover={{ backgroundColor: background ?? HOVER }}
               >
                 {one.isActive && shimmer(accentOf(one))}
                 {/* One line: the name keeps its room, the folder gives way from its start. */}
@@ -1209,7 +1220,6 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   paddingRight={0}
                   paddingY={0}
                   overflow="hidden"
-                  hover={{ backgroundColor: HOVER }}
                 >
                   <Box gap={1} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
                     {chip(base(path))}

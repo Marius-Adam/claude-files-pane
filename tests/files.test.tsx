@@ -236,6 +236,7 @@ test('the first turn sets up /files when session.start never reached the mod', a
 })
 
 test('the tree shows hidden files until asked, and opens a folder', async ($, on) => {
+  mock.clock(on)
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
@@ -259,6 +260,7 @@ test('the tree shows hidden files until asked, and opens a folder', async ($, on
 })
 
 test('a file keeps the chevron space only beside a folder', async ($, on) => {
+  mock.clock(on)
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
@@ -323,6 +325,7 @@ test('icons follow VS Code: an exact name, then the longest extension, then a de
 })
 
 test('a file Claude reads opens no folder: only a press on its name does', async ($, on) => {
+  mock.clock(on)
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
   await $.tool.call({ tool: 'Read', file_path: '/proj/src/client.js' })
@@ -460,6 +463,7 @@ test('a file Claude edits opens its folders, so the change is in sight', async (
 })
 
 test('a folder the person opened stays open when Claude opens another', async ($, on) => {
+  mock.clock(on)
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
@@ -547,7 +551,8 @@ test('a folder name wider than the pane gives way in the header, cut with an ell
   }
 })
 
-test('a press anywhere on a folder row opens it, and a press on it open goes into it', async ($, on) => {
+test('a press anywhere on a folder row opens or shuts it, and a double click goes into it', async ($, on) => {
+  const clock = mock.clock(on)
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
@@ -568,7 +573,17 @@ test('a press anywhere on a folder row opens it, and a press on it open goes int
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
   expect(await upLabel(ui)).toBe('.. /')
 
-  // In src/, the .. row names the folder it leads back to, and src/ is shut there again.
+  // A second press a moment later shuts it again, as its caret would.
+  await clock.advance(1000)
+  await ui.press({ key: 'fold:src' })
+  expect(await text(ui, /^client\.js$/)).toBeUndefined()
+  expect(await upLabel(ui)).toBe('.. /')
+
+  // A double click goes in. In src/, the .. row names the folder it leads back to, and src/ is shut
+  // there again: the double click's first press, which opened it, is put back.
+  await clock.advance(1000)
+  await ui.press({ key: 'fold:src' })
+  await clock.advance(200)
   await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
   expect(await text(ui, /^README\.md$/)).toBeUndefined()
@@ -1028,6 +1043,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 }
 
 test('in a big project "N changed" draws the changed files, not every file in their folders', async ($, on) => {
+  mock.clock(on)
   const names = Array.from({ length: 40 }, (_, i) => `part${String(i).padStart(2, '0')}`)
   const files = Array.from({ length: 40 }, (_, i) => entry(`file${String(i).padStart(2, '0')}.ts`, 'file', 100))
   engine(on, { dirty: [' M part07/file12.ts', ' M part31/file03.ts'], ahead: '0' }, [], [], path =>
@@ -1197,6 +1213,7 @@ test('git reads nothing of a repository other than the session’s', async ($, o
 })
 
 test('Show in tree works with the tree in a folder, above the project, or in another project', async ($, on) => {
+  mock.clock(on)
   world(on, {
     '/proj': [entry('src', 'dir'), entry('home.ts', 'file')],
     '/proj/src': [entry('client.js', 'file')],

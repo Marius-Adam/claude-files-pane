@@ -98,7 +98,7 @@ claude plugin uninstall files-pane@marius-adam
 ## Usage
 
 - `/files` brings the pane back if you close it.
-- A press on a folder opens it; a press on an open folder goes into it, and the **..** row, named for the folder above, leads back.
+- A click on a folder opens or closes it; a double click goes into it, and the **..** row, named for the folder above, leads back.
 - **N changed** shows only the files git reports changed, in their folders; press it again for the whole tree.
 - Colours tell you what happened to a file: read **purple**, edited **orange**, uncommitted **yellow**, committed **green**.
 - What changes without Claude, such as a file you make in your editor or a branch you check out in a terminal, shows within a few seconds while the pane is in sight.
