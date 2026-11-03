@@ -1,18 +1,20 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { Git, Mark } from '../types'
-import { dirOf, join, listPath, slashed, unfiltered } from './paths'
+import type { Git, Mark, Pr } from '../types'
+import { base, dirOf, join, listPath, slashed, unfiltered } from './paths'
 import { DEFAULT_VIEW } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
 // uses it, so every file names its own; state.ts lists the tags they must all share.
-const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-4' })
+const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-5' })
+const pr = atom({ plugin: 'files-pane', key: 'pr' } as const, null, { shape: 'pr-1' })
 const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-4' })
 
-// What the pane reads of the disk: git's view of the project shown, folder listings and the file
-// index search walks. All of it read-only: listings, and git commands that change nothing, run
-// only where the session's own repository is (isTrusted).
+// What the pane reads of the disk: git's view of the project shown, the branch's pull request,
+// folder listings and the file index search walks. All of it read-only: listings, and git and
+// GitHub CLI commands that change nothing, run only where the session's own repository is
+// (isTrusted).
 
 export const SKIP = new Set(['.git'])
 
@@ -142,6 +144,20 @@ async function placeOf($: EngineInterface, at: string | undefined) {
   return { branch: unborn.stdout.trim(), prefix: place.stdout.split('\n')[0] ?? '' }
 }
 
+// The repository a linked worktree belongs to, by its folder's name, from its git directory and the
+// one its worktrees share (`--git-dir --git-common-dir`): those differ only in a linked worktree,
+// whose own sits under the shared one's `worktrees/`. A repository's shared one is `repo/.git`, or
+// for a bare one `repo.git`. Null in the main worktree, or a git too old for `--path-format` (2.31).
+function worktreeOf(dirs: Awaited<ReturnType<typeof run>>) {
+  if (!dirs || dirs.exitCode !== 0) return null
+
+  const [own = '', shared = ''] = dirs.stdout.split('\n').map(line => slashed(line.trim()))
+
+  if (!own || !shared || own === shared) return null
+
+  return base(shared) === '.git' ? base(dirOf(shared)) : base(shared).replace(/\.git$/, '')
+}
+
 // Git as the project shown sees it: `root`, or the session's folder when empty. Paths come
 // relative to that folder, as the tree spells them.
 async function readGit($: EngineInterface, root: string): Promise<Git | null> {
@@ -153,10 +169,11 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
   if (!where) return null
 
   const { branch, prefix } = where
-  const [state, numstat, ahead, ignored] = await Promise.all([
+  const [state, numstat, ahead, dirs, ignored] = await Promise.all([
     run($, ['git', 'status', '--porcelain', '-z', '-uall'], 10000, at),
     run($, ['git', 'diff', '--numstat', '-z', '--relative', 'HEAD'], 10000, at),
     run($, ['git', 'rev-list', '--count', '@{u}..HEAD'], 5000, at),
+    run($, ['git', 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], 5000, at),
     // `--directory` names an ignored folder once, as `node_modules/`, not every file in it.
     run($, ['git', 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'], 10000, at),
   ])
@@ -198,6 +215,7 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
   return {
     branch: branch.trim(),
     ahead: ahead && ahead.exitCode === 0 ? Number(ahead.stdout.trim()) || 0 : null,
+    worktreeOf: worktreeOf(dirs),
     changed,
     marks,
     lines,
@@ -205,12 +223,67 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
   }
 }
 
-// Reads git again for the project shown. A call while a read runs is folded into one more read
+// How long a pull request found stands before git's next read asks GitHub again, as one can be
+// merged or closed outside the session.
+const PR_MS = 2 * 60 * 1000
+
+// Which branch the pull request was last asked for (`root` and the branch, NUL between), and when.
+let prAsked = ''
+let prAt = 0
+
+const PR_STATES: Record<string, Pr['state']> = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' }
+
+// The branch's pull request, as GitHub's CLI finds it. It is asked over the network, so never on
+// git's own read: only for a branch not asked for yet, once PR_MS have passed, or when Claude's
+// command may have changed it (refreshGit's `isPrChanged`). Null without `gh`, signed out, outside
+// GitHub or with no pull request; a lookup a newer one overtook writes nothing.
+async function lookUpPr($: EngineInterface, root: string, branch: string | null) {
+  const asked = branch === null ? '' : `${root}\0${branch}`
+
+  if (asked === prAsked && Date.now() - prAt < PR_MS) return
+
+  prAsked = asked
+  prAt = Date.now()
+
+  const found = branch === null ? null : await prOf($, root, branch)
+
+  if (prAsked !== asked) return
+
+  await update($, pr, () => found)
+  redraw($)
+}
+
+async function prOf($: EngineInterface, root: string, branch: string): Promise<Pr | null> {
+  const out = await $.process
+    .run(['gh', 'pr', 'view', '--json', 'number,url,state,isDraft'], {
+      timeoutMs: 10000,
+      env: { GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' },
+      ...(root ? { cwd: root } : {}),
+    })
+    .catch(() => null)
+
+  if (!out || out.exitCode !== 0) return null
+
+  try {
+    const { number, url, state, isDraft } = JSON.parse(out.stdout) as { number?: unknown; url?: unknown; state?: unknown; isDraft?: unknown }
+
+    if (typeof number !== 'number' || typeof url !== 'string' || typeof state !== 'string' || !PR_STATES[state]) return null
+
+    return { branch, number, url, state: isDraft === true && state === 'OPEN' ? 'draft' : PR_STATES[state] }
+  } catch {
+    return null
+  }
+}
+
+// Reads git again for the project shown, and asks for the branch's pull request when lookUpPr
+// would; `isPrChanged` asks for it now. A call while a read runs is folded into one more read
 // after it, so a burst of tool calls costs two reads, not one each.
 let reading: Promise<void> | null = null
 let isStale = false
 
-export function refreshGit($: EngineInterface): Promise<void> {
+export function refreshGit($: EngineInterface, isPrChanged = false): Promise<void> {
+  if (isPrChanged) prAsked = ''
+
   if (reading) {
     isStale = true
 
@@ -221,8 +294,10 @@ export function refreshGit($: EngineInterface): Promise<void> {
   reading = (async () => {
     do {
       isStale = false
-      const next = await readGit($, (await read($, view)).root)
+      const { root } = await read($, view)
+      const next = await readGit($, root)
       await update($, git, () => next)
+      void lookUpPr($, root, next?.branch ?? null).catch(() => {})
       // With nothing changed left, the tree showing only changed files shows the whole tree again.
       if (!next?.changed.length) await update($, view, unfiltered)
       redraw($)

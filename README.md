@@ -51,7 +51,7 @@
 - **Live card**: Claude's thinking, the command it runs, the file it reads or edits
 - **Tree that follows Claude**: opens to each file it edits, even in another project
 - **Touched list**: files read or edited this turn or session, with lines added and removed
-- **Git**: branch, commits ahead, changed files, ignored files dimmed
+- **Git**: branch, commits ahead, its pull request, the worktree you're in, changed files, ignored files dimmed
 - **Search** with VS Code's icons, best matches first
 - Works in the desktop app, VS Code and the terminal
 
@@ -103,7 +103,7 @@ claude plugin uninstall files-pane@marius-adam
 - Colours tell you what happened to a file: read **purple**, edited **orange**, uncommitted **yellow**, committed **green**.
 - A file's **⋯** menu can `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor, Finder or Explorer.
 
-**Privacy:** the pane is read-only. It lists folders, reads git and looks for your editors, sends nothing anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows). [SECURITY.md](SECURITY.md#what-the-pane-runs) lists every command it runs, and says how to report a vulnerability.
+**Privacy:** the pane is read-only. It lists folders, reads git, asks GitHub's CLI for the branch's pull request and looks for your editors, sends nothing else anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows). [SECURITY.md](SECURITY.md#what-the-pane-runs) lists every command it runs, and says how to report a vulnerability.
 
 **Tokens:** the pane costs none. Its hooks hand Claude's events on unchanged, and what it shows comes from your folders and git, so Claude never sees it. Only **@ Mention** adds to your prompt, the same as typing `@file`.
 
@@ -126,6 +126,8 @@ claude plugin list
 Files pane needs Claude Code 2.1.299 or newer, and should be listed as `files-pane@marius-adam` with its status enabled. In the terminal, update with `claude update`; the desktop app and the VS Code extension update with the app and the extension. Then restart Claude Code.
 
 **The tree has no git colours or branch.** Git is read only in the repository the session started in. A project the tree follows Claude into shows no git.
+
+**The branch's pull request does not show.** It comes from [GitHub's CLI](https://cli.github.com), which must be on the PATH and signed in to an account that can see the repository: check with `gh auth status`. Without it the pane works the same, with no pull request. The pane asks again on **↻ Refresh**.
 
 **Open in is missing, or lacks my editor.** On macOS the editor's app must be installed, and on Linux its command (`code`, `cursor`, `windsurf`, `zed`, `subl`) must be on the PATH. On Windows, see [Prerequisites](#prerequisites). The pane looks once a session, so restart Claude Code after installing one.
 
@@ -164,7 +166,7 @@ Pull requests go to `staging`. A release is one pull request from `staging` to `
 | `hooks/register.tsx` | The mod's hooks: what Claude does reaches the pane through these |
 | `hooks/pane.tsx` | The pane's drawing: the card, git's line, search, the toolbar, the touched list and the tree |
 | `hooks/activity.ts` | Following Claude: the card's timing, commits, diffs |
-| `hooks/disk.ts` | Git, folder listings, the search index, a file's diff |
+| `hooks/disk.ts` | Git, the branch's pull request, folder listings, the search index, a file's diff |
 | `hooks/paths.ts` | Paths and sizes as the pane prints them, and search ranking |
 | `hooks/look.ts` | Colours, type chips and SVGs |
 | `hooks/icons.ts`, `icon-svgs.ts` | Which vscode-icons icon a file or folder gets, and the SVGs (generated) |

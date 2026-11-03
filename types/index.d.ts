@@ -25,17 +25,23 @@ export type View = {
   changed: string[] | null
 }
 
-// The branch, how far it is ahead of its upstream (null without one), the paths git reports as
-// changed with the letter each one gets and their added and removed line counts, and what it
-// ignores (a folder as `dir/`), all relative to the working directory.
+// The branch, how far it is ahead of its upstream (null without one), the repository a linked
+// worktree belongs to (its folder's name; null outside one), the paths git reports as changed with
+// the letter each one gets and their added and removed line counts, and what it ignores (a folder
+// as `dir/`), all relative to the working directory.
 export type Git = {
   branch: string
   ahead: number | null
+  worktreeOf: string | null
   changed: string[]
   marks: Record<string, Mark>
   lines: Record<string, [number, number]>
   ignored: string[]
 }
+
+// The pull request GitHub's CLI finds for a branch: the branch it was asked for, its number, its
+// page and where it stands.
+export type Pr = { branch: string; number: number; url: string; state: 'open' | 'draft' | 'merged' | 'closed' }
 
 // What git sees in a changed file, as VS Code's explorer letters it: modified, added, deleted,
 // renamed, untracked, or in conflict.
@@ -66,6 +72,7 @@ declare module 'claude-code' {
       isTouchedAll: boolean
       view: Shaped<View>
       git: Shaped<Git | null>
+      pr: Shaped<Pr | null>
       diff: Shaped<Diff | null>
       menu: Shaped<Menu | null>
       status: Shaped<Status | null>

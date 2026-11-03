@@ -168,8 +168,8 @@ test('on Windows, the tree follows Claude to a project on another drive, without
   expect(await text(ui, /^lib$/)).toBe('lib')
   expect(await text(ui, /^util\.ts$/)).toBe('util.ts')
   expect(await text(ui, /^home\.ts$/)).toBeUndefined()
-  // Another repository's config may run programs: nothing but rev-parse runs there.
-  const risky = (one: { argv: string[] }) => ['status', 'diff', 'ls-files'].some(cmd => one.argv.includes(cmd))
+  // Another repository's config may run programs: nothing but rev-parse runs there, and no GitHub CLI.
+  const risky = (one: { argv: string[] }) => ['status', 'diff', 'ls-files', 'gh'].some(cmd => one.argv.includes(cmd))
   expect(ran.filter(one => one.cwd?.startsWith('D:') && risky(one))).toEqual([])
 
   await ui.press({ key: 'home' })

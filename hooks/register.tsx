@@ -4,6 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import {
   absOf,
   afterCommit,
+  changesPr,
   commitDir,
   describe,
   endWork,
@@ -84,6 +85,8 @@ export const register: Register = on => {
         return await next(e)
       } finally {
         await afterCommit($, cwd, repo, before).catch(() => {})
+        // `git commit && git push`: the push may have opened or moved the pull request.
+        if (changesPr(e)) void refreshGit($, true)
       }
     }
 
@@ -97,9 +100,10 @@ export const register: Register = on => {
       } finally {
         await endWork($, id).catch(() => {})
         // A command may have made, moved or removed files: the tree lists its folders again, and
-        // git, which only a command can change, is read again.
+        // git, which only a command can change, is read again, with the pull request when the
+        // command may have changed it.
         forget()
-        if (e.tool === 'Bash') void refreshGit($)
+        if (e.tool === 'Bash') void refreshGit($, changesPr(e))
         redraw($)
       }
     }
