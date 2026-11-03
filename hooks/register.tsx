@@ -18,7 +18,7 @@ import {
   touchOf,
   upsert,
 } from './activity'
-import { forget, headOf, redraw, refreshGit, sessionDir } from './disk'
+import { forget, headOf, lookForChanges, redraw, refreshGit, sessionDir } from './disk'
 import { hostOf } from './editors'
 import { renderPane } from './pane'
 import { base, rel, tailOf } from './paths'
@@ -52,6 +52,7 @@ const setUp = async ($: EngineInterface) => {
   await $.command.register({ name: 'files', description: 'Show the Files pane: what Claude reads and edits, and the project tree' })
   void openPane($).catch(() => {})
   void refreshGit($)
+  lookForChanges($)
   // Ahead of the first ⋯, so its menu opens with the editors already found.
   void hostOf($)
 }

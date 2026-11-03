@@ -271,6 +271,21 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
   }
 }
 
+// Git's state in two commands, for comparing, not reading: the branch, its commit and how far it
+// is from its upstream, each changed file's state, and the lines changed in each. Null where git
+// may not run or did not answer.
+async function printOf($: EngineInterface, root: string): Promise<string | null> {
+  if (root && !(await isTrusted($, root))) return null
+
+  const at = root || undefined
+  const [state, numstat] = await Promise.all([
+    run($, ['git', 'status', '--porcelain=v2', '--branch', '-z', '-uall'], 10000, at),
+    run($, ['git', 'diff', '--numstat', '-z', 'HEAD'], 10000, at),
+  ])
+
+  return state && state.exitCode === 0 ? `${state.stdout}\0\0${numstat?.stdout ?? ''}` : null
+}
+
 // How long a pull request found stands before git's next read asks GitHub again, as one can be
 // merged or closed outside the session. While its checks run, it is asked again this often by
 // itself, with or without a read, until they end.
@@ -463,6 +478,92 @@ export async function indexFiles($: EngineInterface, home: string): Promise<stri
 export const forget = () => {
   fileIndex = null
   listings.clear()
+}
+
+// What changes on the disk without Claude (a file made in an editor, a branch checked out in a
+// terminal) shows too: while the pane is in sight, every few seconds, it lists the folders the
+// tree holds again and asks git for its state, and draws again only where either moved. Those
+// are the folders listed since the pane last forgot them, at most LOOK_FOLDERS; and the wait
+// grows with them, as one listing costs about as much as another.
+const LOOK_MS = 3000
+const LOOK_MS_PER_FOLDER = 500
+const LOOK_FOLDERS = 64
+
+let isLooking = false
+// Whether the last look found the pane in sight, and what `printOf` gave it, for which project.
+let wasShown = true
+let gitSeen: { root: string; print: string } | null = null
+
+export function lookForChanges($: EngineInterface) {
+  if (isLooking) return
+
+  isLooking = true
+  const next = (ms: number) =>
+    $.clock.after(ms, () => {
+      void lookAgain($)
+        .catch(() => 0)
+        .then(folders => next(Math.max(LOOK_MS, folders * LOOK_MS_PER_FOLDER)))
+    })
+
+  // The first look at once, beside git's first read, so a change made in the seconds after is
+  // not taken for how things were.
+  next(0)
+}
+
+// A listing as the tree draws it: each entry's name and kind, and its size, which Sizes shows.
+const namesOf = (entries: Entry[]) => entries.map(entry => `${entry.kind}\0${entry.name}`).sort().join('\0\0')
+const sizesOf = (entries: Entry[]) => entries.map(entry => `${entry.kind}\0${entry.name}\0${entry.size}`).sort().join('\0\0')
+
+// One look; resolves how many folders it listed.
+async function lookAgain($: EngineInterface): Promise<number> {
+  // Any of the plugin's panes in sight counts: each shows what is on the disk. A Claude Code that
+  // cannot list its panes gets looks as though one were.
+  const panes = await $.ui.panes().catch(() => null)
+
+  if (panes && !panes.some(pane => pane.isShown && pane.isPlaced)) {
+    wasShown = false
+
+    return 0
+  }
+
+  // A pane back in sight reads git again whole: what changed while it was hidden went unlooked at.
+  const isBack = !wasShown
+  wasShown = true
+
+  const folders = [...listings].slice(0, LOOK_FOLDERS)
+  let isRenamed = false
+  let isResized = false
+
+  await Promise.all(
+    folders.map(async ([path, held]) => {
+      const [was, now] = await Promise.all([held, $.fs.list(path).catch(() => null)])
+
+      if (now === null || sizesOf(was) === sizesOf(now)) return
+      // A forget since the look began dropped this listing: the tree lists it afresh anyway.
+      if (listings.get(path) !== held) return
+
+      listings.set(path, Promise.resolve(now))
+      if (namesOf(was) === namesOf(now)) isResized = true
+      else isRenamed = true
+    }),
+  )
+
+  // A file made or removed is one search should find, or not; it may be one git ignores, so git
+  // is read again as well, for the tree to dim it.
+  if (isRenamed) fileIndex = null
+
+  // Git's state against the last look's: the first look in a project only notes it, and one git
+  // did not answer (it timed out, or may not run there) compares with nothing.
+  const { root } = await read($, view)
+  const print = await printOf($, root)
+  const seen = gitSeen
+  const isGitMoved = print !== null && seen !== null && seen.root === root && seen.print !== print
+
+  if (print !== null) gitSeen = { root, print }
+  if (isRenamed || isGitMoved || isBack) void refreshGit($)
+  else if (isResized) redraw($)
+
+  return folders.length
 }
 
 // A diff the pane shows whole up to this many lines; past it, cut where a hunk ends.

@@ -32,8 +32,9 @@ const asked = (path: string) => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/
 
 // What git answers in the engine below. `dirty` is what it reports as changed (`git status -z`
 // fields), so a test can commit by emptying it; a commit moves HEAD to a1c9e42 unless `isRefused`,
-// as a failing hook would. `diff` is what `git diff` prints for a file.
-type GitWorld = { dirty: string[]; ahead: string; head?: string; shown?: string; isRefused?: boolean; diff?: string }
+// as a failing hook would. `diff` is what `git diff` prints for a file. `isStateUnanswered` fails
+// `git status --porcelain=v2`, as a git that timed out would.
+type GitWorld = { dirty: string[]; ahead: string; head?: string; shown?: string; isRefused?: boolean; diff?: string; isStateUnanswered?: boolean }
 
 // Each hook stands for the engine: a project at /proj with src/ and tests/, on branch main.
 // `ran` collects every command git is asked, with the folder it runs in; `list`, given, answers
@@ -69,6 +70,7 @@ const engine = (
   on('process.run', (_, e) => {
     const { argv, init } = e as { argv: string[]; init?: { cwd?: string } }
     ran.push({ argv, cwd: init?.cwd })
+    if (git.isStateUnanswered && argv.includes('--porcelain=v2')) return { value: { exitCode: 128, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     const stdout = argv.includes('--abbrev-ref')
       ? 'main\n'
       : argv.includes('--absolute-git-dir')
@@ -625,6 +627,137 @@ test('a command makes the pane read git again; a web search does not', async ($,
   await $.tool.call({ tool: 'Bash', command: 'touch notes.md', description: 'Make a note' })
   await settled()
   expect(reads()).toBeGreaterThan(before)
+})
+
+// The pane as the engine lists it: in sight, or a tab behind another.
+const panes = (on: Parameters<TestBody>[1], pane: { isShown: boolean }) =>
+  on('ui.panes', () => ({ value: [{ id: 'files-pane', title: 'Files: proj', isShown: pane.isShown, isFocused: false, isPlaced: true }] }))
+
+test('a file made or removed outside Claude shows in the tree within seconds', async ($, on) => {
+  const tree: Record<string, ReturnType<typeof entry>[]> = { '/proj': [entry('README.md', 'file'), entry('src', 'dir')] }
+  engine(on, undefined, [], [], path => tree[path] ?? [])
+  panes(on, { isShown: true })
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  // The pane's first look, which notes how things are.
+  await clock.settle()
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  expect(await text(ui, /^notes\.md$/)).toBeUndefined()
+
+  tree['/proj'] = [...tree['/proj']!, entry('notes.md', 'file')]
+  await clock.advance(3000)
+  await settled()
+  expect(await text(ui, /^notes\.md$/)).toBe('notes.md')
+
+  tree['/proj'] = tree['/proj']!.filter(one => one.name !== 'README.md')
+  await clock.advance(3000)
+  await settled()
+  expect(await text(ui, /^README\.md$/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a change git sees outside Claude shows in the branch row within seconds', async ($, on) => {
+  const git: GitWorld = { dirty: [], ahead: '0' }
+  engine(on, git)
+  panes(on, { isShown: true })
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  // The pane's first look, which notes how things are.
+  await clock.settle()
+  await settled()
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  expect(await text(ui, /clean, nothing changed/)).toBe('clean, nothing changed')
+
+  git.dirty = [' M src/client.js']
+  await clock.advance(3000)
+  await settled()
+  expect(await text(ui, /^ ?1 changed ?$/)).toMatch(/1 changed/)
+  await ui.unmount()
+})
+
+test('the pane looks for changes only while in sight, and reads git whole only when git moved', async ($, on) => {
+  const ran: { argv: string[]; cwd?: string }[] = []
+  const pane = { isShown: false }
+  engine(on, undefined, [], ran)
+  panes(on, pane)
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  // The pane's first look, which notes how things are.
+  await clock.settle()
+  await settled()
+
+  // A whole read of git asks for the branch; a look asks only for git's state.
+  const reads = () => ran.filter(one => one.argv.includes('--abbrev-ref')).length
+  const looks = () => ran.filter(one => one.argv.includes('--porcelain=v2')).length
+  const before = { reads: reads(), looks: looks() }
+
+  // Behind another tab, it looks at nothing.
+  await clock.advance(9000)
+  await settled()
+  expect({ reads: reads(), looks: looks() }).toEqual(before)
+
+  // Back in sight, it reads git once, for what changed while it was hidden.
+  pane.isShown = true
+  await clock.advance(3000)
+  await settled()
+  expect(reads()).toBe(before.reads + 1)
+
+  // Then it looks; with nothing changed, git is not read again.
+  const shown = { reads: reads(), looks: looks() }
+  await clock.advance(3000)
+  await settled()
+  expect(looks()).toBeGreaterThan(shown.looks)
+  expect(reads()).toBe(shown.reads)
+})
+
+test('another of the plugin’s panes in sight keeps the looks going, the Files pane a tab behind', async ($, on) => {
+  const ran: { argv: string[]; cwd?: string }[] = []
+  engine(on, undefined, [], ran)
+  on('ui.panes', () => ({
+    value: [
+      { id: 'files-pane-file', title: 'client.js', isShown: true, isFocused: false, isPlaced: true },
+      { id: 'files-pane', title: 'Files: proj', isShown: false, isFocused: false, isPlaced: true },
+    ],
+  }))
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  await settled()
+
+  const looks = () => ran.filter(one => one.argv.includes('--porcelain=v2')).length
+  const before = looks()
+
+  await clock.advance(3000)
+  await settled()
+  expect(looks()).toBeGreaterThan(before)
+})
+
+test('a look git does not answer is not taken for a change', async ($, on) => {
+  const ran: { argv: string[]; cwd?: string }[] = []
+  const git: GitWorld = { dirty: [' M src/client.js'], ahead: '0' }
+  engine(on, git, [], ran)
+  panes(on, { isShown: true })
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  // The pane's first look, which notes how things are.
+  await clock.settle()
+  await clock.advance(3000)
+  await settled()
+
+  const reads = () => ran.filter(one => one.argv.includes('--abbrev-ref')).length
+  const before = reads()
+
+  git.isStateUnanswered = true
+  await clock.advance(3000)
+  await settled()
+  git.isStateUnanswered = false
+  await clock.advance(3000)
+  await settled()
+  expect(reads()).toBe(before)
 })
 
 test('two commands at once: the card shows the one still running when the other ends', async ($, on) => {

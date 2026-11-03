@@ -101,6 +101,7 @@ claude plugin uninstall files-pane@marius-adam
 - A press on a folder opens it; a press on an open folder goes into it, and the **..** row, named for the folder above, leads back.
 - **N changed** shows only the files git reports changed, in their folders; press it again for the whole tree.
 - Colours tell you what happened to a file: read **purple**, edited **orange**, uncommitted **yellow**, committed **green**.
+- What changes without Claude, such as a file you make in your editor or a branch you check out in a terminal, shows within a few seconds while the pane is in sight.
 - A file's **⋯** menu can `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor, Finder or Explorer.
 
 **Privacy:** the pane is read-only. It lists folders, reads git, asks GitHub's CLI for the branch's pull request and looks for your editors, sends nothing else anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows). [SECURITY.md](SECURITY.md#what-the-pane-runs) lists every command it runs, and says how to report a vulnerability.
