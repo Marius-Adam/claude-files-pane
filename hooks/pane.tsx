@@ -280,6 +280,25 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Text size="footnote">⋯</Text>
       </Button>
     )
+    // Where a press layer spans a file's row, the ⋯ floats over it: an absolute Box paints over
+    // every Box in the flow, and only a later absolute one paints over it. A blank twin keeps the
+    // ⋯'s room at the row's end, as wide as it is, so the counts and marks do not slide under it.
+    const moreRoom = (where: Menu['where'], abs: string) =>
+      canLayer ? (
+        <Button key={`room:${where}:${abs}`} plain dimColor onPress={() => toggleActions(where, abs)}>
+          <Text size="footnote" color={CLEAR}>
+            ⋯
+          </Text>
+        </Button>
+      ) : (
+        more(where, abs)
+      )
+    const moreOver = (where: Menu['where'], abs: string) =>
+      canLayer ? (
+        <Box position="absolute" top={0} right={0} bottom={0} alignItems="center">
+          {more(where, abs)}
+        </Box>
+      ) : null
 
     // A file's row and, while its ⋯ is pressed, its actions in a popover over the row above, at the
     // ⋯'s end, laid out as the app's own menus are: put it in the prompt and copy its path; see its
@@ -499,9 +518,9 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const pressAway = (key: string) => (acts ? pressAnywhere(`away:${key}`, closeActions) : null)
 
     // A press on a file's row opens it in the file pane. Where the surface lays a press over a row,
-    // the layer sits in the row's left part, which clips it, so the ⋯ at the row's end stays its
-    // own. That part grows to the ⋯: one that hugged the name would light only the name under the
-    // pointer, and leave the rest of the row deaf. On the terminal the name is the Button. VS Code, which does neither, opens it from the ⋯.
+    // the layer spans the whole row, as a folder's does, so the two light alike under the pointer.
+    // It comes first in the row, and the ⋯ floats over it (`moreOver`): the ⋯ stays its own.
+    // On the terminal the name is the Button. VS Code, which does neither, opens it from the ⋯.
     const openLayer = (where: Menu['where'], abs: string) => (canLayer ? pressAnywhere(`open-row:${where}:${abs}`, () => openFile($, abs)) : null)
     const opens = (where: Menu['where'], abs: string, name: JSX.Element) =>
       isRich ? (
@@ -800,9 +819,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   {chevron(isOpen, () => toggle(path), `caret:${path}`)}
                   {icon(folderIcon(entry.name, isOpen), entry.name, '▪', folderColor, 16)}
                 </Box>
-                {/* Where the surface paints but lays no press over the row, a Button is filled: the
-                    name is text there, and the caret takes the press. */}
-                {isRich && !canLayer ? (
+                {/* Where the surface paints the name is text, as a file's is: the desktop pads a
+                    Button, which would set the name off from a file's, and VS Code fills one. A
+                    press on the row or the caret opens it there. */}
+                {isRich ? (
                   name
                 ) : (
                   <Button key={`dir:${path}`} plain onPress={() => openOrEnter(path)}>
@@ -853,6 +873,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               overflow="hidden"
             >
               {touch?.isActive && shimmer(accentOf(touch))}
+              {openLayer('tree', join(home, path))}
               <Box gap={1} alignItems="center" paddingLeft={indent} flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
                 {/* The chevron's width, unseen, in every file's row: its icon lines up with a sibling
                     folder's, and with the row above when no folder is beside it. */}
@@ -872,13 +893,13 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                     {entry.name}
                   </Text>,
                 )}
-                {openLayer('tree', join(home, path))}
               </Box>
               <Box flexShrink={0} gap={1} alignItems="center">
                 {right}
                 {mark(path)}
-                {more('tree', join(home, path))}
+                {moreRoom('tree', join(home, path))}
               </Box>
+              {moreOver('tree', join(home, path))}
             </Box>
           )
 
@@ -912,7 +933,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const query = v.query.trim().toLowerCase()
     const matches = query ? rank(await indexFiles($, home), query, MATCHES) : []
 
-    if (!query) await walk(v.dir, 1)
+    if (!query) await walk(v.dir, 0)
 
     const totals = Object.values(g?.lines ?? {}).reduce<[number, number]>(([a, d], [x, y]) => [a + x, d + y], [0, 0])
     // The pull request found for the branch shown: one found for a branch since left is not its.
@@ -1146,6 +1167,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 overflow="hidden"
               >
                 {one.isActive && shimmer(accentOf(one))}
+                {openLayer('touched', abs)}
                 {/* One line: the name keeps its room, the folder gives way from its start. */}
                 <Box gap={1} alignItems="center" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
                   {chip(base(one.path))}
@@ -1163,7 +1185,6 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                       {where(dirOf(one.path))}
                     </Text>
                   </Box>
-                  {openLayer('touched', abs)}
                 </Box>
                 <Box gap={1} alignItems="center" flexShrink={0}>
                   {one.isEdited && !one.isCommitted && counts(one.path)}
@@ -1171,8 +1192,9 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   <Text dimColor size="footnote" tabular>
                     {timeOf(one.at)}
                   </Text>
-                  {more('touched', abs)}
+                  {moreRoom('touched', abs)}
                 </Box>
+                {moreOver('touched', abs)}
               </Box>,
               'touched',
               abs,
@@ -1215,6 +1237,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   paddingY={0}
                   overflow="hidden"
                 >
+                  {openLayer('match', join(home, path))}
                   <Box gap={1} alignItems="center" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
                     {chip(base(path))}
                     {opens(
@@ -1224,9 +1247,9 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                         {path}
                       </Text>,
                     )}
-                    {openLayer('match', join(home, path))}
                   </Box>
-                  <Box flexShrink={0}>{more('match', join(home, path))}</Box>
+                  <Box flexShrink={0}>{moreRoom('match', join(home, path))}</Box>
+                  {moreOver('match', join(home, path))}
                 </Box>,
                 'match',
                 join(home, path),

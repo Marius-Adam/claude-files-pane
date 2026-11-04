@@ -264,7 +264,7 @@ test('the tree shows hidden files until asked, and opens a folder', async ($, on
   expect(await text(ui, /^\.env$/)).toBe('.env')
   expect(await text(ui, /^client\.js$/)).toBeUndefined()
 
-  await ui.press({ key: 'dir:src' })
+  await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
   // The desktop draws the vscode-icons JavaScript icon where the terminal draws a chip.
   const icons = (await ui.findAll({ type: 'Svg' })) as unknown as { props: { source: string; alt: string } }[]
@@ -288,7 +288,7 @@ test('every file keeps the chevron space, beside a folder or not', async ($, on)
 
   // README.md and .env sit beside src/ and tests/; client.js has no folder beside it in src/, and
   // lines up under src/'s icon all the same.
-  await ui.press({ key: 'dir:src' })
+  await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
   expect(await blanks()).toHaveLength(4)
   await ui.unmount()
@@ -356,7 +356,7 @@ test('a file Claude reads opens no folder: only a press on its name does', async
   expect(await count()).toBe(1)
   expect(await chevrons(ui)).not.toContain('open')
 
-  await ui.press({ key: 'dir:src' })
+  await ui.press({ key: 'fold:src' })
   expect(await count()).toBe(2)
   expect(await chevrons(ui)).toContain('open')
   await ui.unmount()
@@ -489,7 +489,7 @@ test('a folder the person opened stays open when Claude opens another', async ($
   // The person opens tests/ on a drawing made before Claude's edit opens src/.
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
-  await ui.press({ key: 'dir:tests' })
+  await ui.press({ key: 'fold:tests' })
 
   expect((await chevrons(ui)).filter(one => one === 'open')).toHaveLength(2)
   await ui.unmount()
@@ -1079,7 +1079,7 @@ test('in a big project "N changed" draws the changed files, not every file in th
   expect(drawn).toEqual(['part07', 'file12.ts', 'part31', 'file03.ts'])
   // A folder opened by hand still lists everything in it.
   await ui.press({ key: 'changed' })
-  await ui.press({ key: 'dir:part00' })
+  await ui.press({ key: 'fold:part00' })
   expect(await text(ui, /^file39\.ts$/)).toBe('file39.ts')
   await ui.unmount()
 })

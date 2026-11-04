@@ -124,7 +124,7 @@ test('a press on a file’s row opens it in a pane of its own, beside the Files 
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
   const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await files.press({ key: 'dir:src' })
+  await files.press({ key: 'fold:src' })
   await files.press({ key: `open-row:tree:${CLIENT}` })
 
   // It opens a tab beside the Files pane, and asks for the keys, which brings it to the front.
@@ -145,7 +145,7 @@ test('Diff shows what changed since the last commit; History the commits that ch
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
   const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await files.press({ key: 'dir:src' })
+  await files.press({ key: 'fold:src' })
   await files.press({ key: `open-row:tree:${CLIENT}` })
 
   const file = await $.ui.mount({ ...FILE_PANE, surface: 'desktop' })
@@ -180,7 +180,7 @@ test('a commit’s change is read from the path the file had then, from the repo
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
   const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await files.press({ key: 'dir:src' })
+  await files.press({ key: 'fold:src' })
   await files.press({ key: `open-row:tree:${CLIENT}` })
 
   const file = await $.ui.mount({ ...FILE_PANE, surface: 'desktop' })
@@ -221,7 +221,7 @@ test('a binary file, or one too large, says so instead of drawing it', async ($,
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
   const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await files.press({ key: 'dir:src' })
+  await files.press({ key: 'fold:src' })
   await files.press({ key: `open-row:tree:${CLIENT}` })
 
   const file = await $.ui.mount({ ...FILE_PANE, surface: 'desktop' })
@@ -241,7 +241,7 @@ test('a file Claude edits shows its new text in the file pane', async ($, on) =>
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
   const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await files.press({ key: 'dir:src' })
+  await files.press({ key: 'fold:src' })
   await files.press({ key: `open-row:tree:${CLIENT}` })
 
   const file = await $.ui.mount({ ...FILE_PANE, surface: 'desktop' })
@@ -315,7 +315,7 @@ test('a diff past what one drawing holds is cut where a hunk ends, and the rest 
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
   const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await files.press({ key: 'dir:src' })
+  await files.press({ key: 'fold:src' })
   await files.press({ key: `open-row:tree:${CLIENT}` })
 
   const file = await $.ui.mount({ ...FILE_PANE, surface: 'desktop' })
@@ -346,7 +346,7 @@ test('a file pressed while the file pane is a tab behind brings it to the front 
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
   const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await files.press({ key: 'dir:src' })
+  await files.press({ key: 'fold:src' })
   await files.press({ key: `open-row:tree:${CLIENT}` })
 
   expect(closed).toEqual(['files-pane-file'])
@@ -367,7 +367,7 @@ test('a file saved outside Claude shows its new text in the file pane within sec
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
   const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await files.press({ key: 'dir:src' })
+  await files.press({ key: 'fold:src' })
   await files.press({ key: `open-row:tree:${CLIENT}` })
 
   const file = await $.ui.mount({ ...FILE_PANE, surface: 'desktop' })
@@ -380,5 +380,37 @@ test('a file saved outside Claude shows its new text in the file pane within sec
   await clock.settle()
   expect((await codes(file)).map(one => one.props.source)).toEqual(['export const retry = 10\nexport const backoff = 200'])
   await file.unmount()
+  await files.unmount()
+})
+
+test('on the desktop a file row’s ⋯ floats over the press that opens the file, so it stays its own', async ($, on) => {
+  mock.clock(on)
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Read', file_path: CLIENT })
+
+  const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await files.press({ key: 'fold:src' })
+
+  // An absolute Box paints over every Box in the flow, and only a later absolute one paints over
+  // it: a ⋯ in the row's flow sat under the layer, and a press on it opened the file.
+  type Node = { props?: { key?: string; position?: string }; children?: unknown[] }
+  const holds = (one: unknown, key: string): boolean =>
+    (one as Node | null)?.props?.key === key || ((one as Node | null)?.children ?? []).some(child => holds(child, key))
+  const floats = (one: unknown, key: string) => (one as Node | null)?.props?.position === 'absolute' && holds(one, key)
+  const boxes = (await files.findAll({ type: 'Box' })) as unknown as Node[]
+
+  for (const where of ['tree', 'touched']) {
+    const row = boxes.find(one => (one.children ?? []).some(child => floats(child, `open-row:${where}:${CLIENT}`)))
+    const children = row?.children ?? []
+    const layer = children.findIndex(child => floats(child, `open-row:${where}:${CLIENT}`))
+    const more = children.findIndex(child => floats(child, `more:${where}:${CLIENT}`))
+
+    expect(layer).toBeGreaterThanOrEqual(0)
+    expect(more).toBeGreaterThan(layer)
+  }
+
+  await files.press({ key: `more:tree:${CLIENT}` })
+  expect(((await files.findAll({ type: 'Text', text: /^@ Mention$/ })) as unknown as unknown[]).length).toBe(1)
   await files.unmount()
 })
