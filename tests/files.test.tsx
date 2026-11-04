@@ -32,8 +32,9 @@ const asked = (path: string) => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/
 
 // What git answers in the engine below. `dirty` is what it reports as changed (`git status -z`
 // fields), so a test can commit by emptying it; a commit moves HEAD to a1c9e42 unless `isRefused`,
-// as a failing hook would. `diff` is what `git diff` prints for a file.
-type GitWorld = { dirty: string[]; ahead: string; head?: string; shown?: string; isRefused?: boolean; diff?: string }
+// as a failing hook would. `diff` is what `git diff` prints for a file. `isStateUnanswered` fails
+// `git status --porcelain=v2`, as a git that timed out would.
+type GitWorld = { dirty: string[]; ahead: string; head?: string; shown?: string; isRefused?: boolean; diff?: string; isStateUnanswered?: boolean }
 
 // Each hook stands for the engine: a project at /proj with src/ and tests/, on branch main.
 // `ran` collects every command git is asked, with the folder it runs in; `list`, given, answers
@@ -69,6 +70,7 @@ const engine = (
   on('process.run', (_, e) => {
     const { argv, init } = e as { argv: string[]; init?: { cwd?: string } }
     ran.push({ argv, cwd: init?.cwd })
+    if (git.isStateUnanswered && argv.includes('--porcelain=v2')) return { value: { exitCode: 128, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     const stdout = argv.includes('--abbrev-ref')
       ? 'main\n'
       : argv.includes('--absolute-git-dir')
@@ -229,6 +231,19 @@ test('a redraw does not list the tree again; a command does', async ($, on) => {
   await ui.unmount()
 })
 
+test('the tree reads numbers in names as numbers, and shows no file the system leaves for itself', async ($, on) => {
+  world(on, {
+    '/proj': ['file10.ts', 'file2.ts', 'file1.ts', '.DS_Store', 'Thumbs.db', 'desktop.ini', '.env'].map(name => entry(name, 'file')).concat(entry('__MACOSX', 'dir')),
+  })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const names = (await reading(ui)).split(' ').filter(word => /^(file\d+\.ts|\.DS_Store|Thumbs\.db|desktop\.ini|__MACOSX|\.env)$/.test(word))
+
+  expect(names).toEqual(['.env', 'file1.ts', 'file2.ts', 'file10.ts'])
+  await ui.unmount()
+})
+
 test('the first turn sets up /files when session.start never reached the mod', async ($, on) => {
   const registered: string[] = []
   engine(on, undefined, registered)
@@ -240,6 +255,7 @@ test('the first turn sets up /files when session.start never reached the mod', a
 })
 
 test('the tree shows hidden files until asked, and opens a folder', async ($, on) => {
+  mock.clock(on)
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
@@ -248,7 +264,7 @@ test('the tree shows hidden files until asked, and opens a folder', async ($, on
   expect(await text(ui, /^\.env$/)).toBe('.env')
   expect(await text(ui, /^client\.js$/)).toBeUndefined()
 
-  await ui.press({ key: 'dir:src' })
+  await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
   // The desktop draws the vscode-icons JavaScript icon where the terminal draws a chip.
   const icons = (await ui.findAll({ type: 'Svg' })) as unknown as { props: { source: string; alt: string } }[]
@@ -262,17 +278,19 @@ test('the tree shows hidden files until asked, and opens a folder', async ($, on
   await ui.unmount()
 })
 
-test('a file keeps the chevron space only beside a folder', async ($, on) => {
+test('every file keeps the chevron space, beside a folder or not', async ($, on) => {
+  mock.clock(on)
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   const blanks = async () => ((await ui.findAll({ type: 'Svg' })) as unknown as { props: { alt: string } }[]).filter(one => one.props.alt === 'file')
 
-  // README.md and .env sit beside src/ and tests/; client.js has no folder beside it in src/.
-  await ui.press({ key: 'dir:src' })
+  // README.md and .env sit beside src/ and tests/; client.js has no folder beside it in src/, and
+  // lines up under src/'s icon all the same.
+  await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
-  expect(await blanks()).toHaveLength(3)
+  expect(await blanks()).toHaveLength(4)
   await ui.unmount()
 })
 
@@ -326,6 +344,7 @@ test('icons follow VS Code: an exact name, then the longest extension, then a de
 })
 
 test('a file Claude reads opens no folder: only a press on its name does', async ($, on) => {
+  mock.clock(on)
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
   await $.tool.call({ tool: 'Read', file_path: '/proj/src/client.js' })
@@ -337,7 +356,7 @@ test('a file Claude reads opens no folder: only a press on its name does', async
   expect(await count()).toBe(1)
   expect(await chevrons(ui)).not.toContain('open')
 
-  await ui.press({ key: 'dir:src' })
+  await ui.press({ key: 'fold:src' })
   expect(await count()).toBe(2)
   expect(await chevrons(ui)).toContain('open')
   await ui.unmount()
@@ -463,13 +482,14 @@ test('a file Claude edits opens its folders, so the change is in sight', async (
 })
 
 test('a folder the person opened stays open when Claude opens another', async ($, on) => {
+  mock.clock(on)
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
   // The person opens tests/ on a drawing made before Claude's edit opens src/.
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
-  await ui.press({ key: 'dir:tests' })
+  await ui.press({ key: 'fold:tests' })
 
   expect((await chevrons(ui)).filter(one => one === 'open')).toHaveLength(2)
   await ui.unmount()
@@ -551,7 +571,8 @@ test('a folder name wider than the pane gives way in the header, cut with an ell
   }
 })
 
-test('a press anywhere on a folder row opens it, and a press on it open goes into it', async ($, on) => {
+test('a press anywhere on a folder row opens or shuts it, and a double click goes into it', async ($, on) => {
+  const clock = mock.clock(on)
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
@@ -572,7 +593,17 @@ test('a press anywhere on a folder row opens it, and a press on it open goes int
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
   expect(await rootRow(ui)).toBe('proj ↑ Up')
 
-  // In src/, the first row names src, the folder shown, and src/ is shut there again.
+  // A second press a moment later shuts it again, as its caret would.
+  await clock.advance(1000)
+  await ui.press({ key: 'fold:src' })
+  expect(await text(ui, /^client\.js$/)).toBeUndefined()
+  expect(await rootRow(ui)).toBe('proj ↑ Up')
+
+  // A double click goes in. In src/, the first row names src, the folder shown, and src/ is shut
+  // there again: the double click's first press, which opened it, is put back.
+  await clock.advance(1000)
+  await ui.press({ key: 'fold:src' })
+  await clock.advance(200)
   await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
   expect(await text(ui, /^README\.md$/)).toBeUndefined()
@@ -631,6 +662,137 @@ test('a command makes the pane read git again; a web search does not', async ($,
   await $.tool.call({ tool: 'Bash', command: 'touch notes.md', description: 'Make a note' })
   await settled()
   expect(reads()).toBeGreaterThan(before)
+})
+
+// The pane as the engine lists it: in sight, or a tab behind another.
+const panes = (on: Parameters<TestBody>[1], pane: { isShown: boolean }) =>
+  on('ui.panes', () => ({ value: [{ id: 'files-pane', title: 'Files: proj', isShown: pane.isShown, isFocused: false, isPlaced: true }] }))
+
+test('a file made or removed outside Claude shows in the tree within seconds', async ($, on) => {
+  const tree: Record<string, ReturnType<typeof entry>[]> = { '/proj': [entry('README.md', 'file'), entry('src', 'dir')] }
+  engine(on, undefined, [], [], path => tree[path] ?? [])
+  panes(on, { isShown: true })
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  // The pane's first look, which notes how things are.
+  await clock.settle()
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  expect(await text(ui, /^notes\.md$/)).toBeUndefined()
+
+  tree['/proj'] = [...tree['/proj']!, entry('notes.md', 'file')]
+  await clock.advance(3000)
+  await settled()
+  expect(await text(ui, /^notes\.md$/)).toBe('notes.md')
+
+  tree['/proj'] = tree['/proj']!.filter(one => one.name !== 'README.md')
+  await clock.advance(3000)
+  await settled()
+  expect(await text(ui, /^README\.md$/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a change git sees outside Claude shows in the branch row within seconds', async ($, on) => {
+  const git: GitWorld = { dirty: [], ahead: '0' }
+  engine(on, git)
+  panes(on, { isShown: true })
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  // The pane's first look, which notes how things are.
+  await clock.settle()
+  await settled()
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  expect(await text(ui, /clean, nothing changed/)).toBe('clean, nothing changed')
+
+  git.dirty = [' M src/client.js']
+  await clock.advance(3000)
+  await settled()
+  expect(await text(ui, /^ ?1 changed ?$/)).toMatch(/1 changed/)
+  await ui.unmount()
+})
+
+test('the pane looks for changes only while in sight, and reads git whole only when git moved', async ($, on) => {
+  const ran: { argv: string[]; cwd?: string }[] = []
+  const pane = { isShown: false }
+  engine(on, undefined, [], ran)
+  panes(on, pane)
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  // The pane's first look, which notes how things are.
+  await clock.settle()
+  await settled()
+
+  // A whole read of git asks for the branch; a look asks only for git's state.
+  const reads = () => ran.filter(one => one.argv.includes('--abbrev-ref')).length
+  const looks = () => ran.filter(one => one.argv.includes('--porcelain=v2')).length
+  const before = { reads: reads(), looks: looks() }
+
+  // Behind another tab, it looks at nothing.
+  await clock.advance(9000)
+  await settled()
+  expect({ reads: reads(), looks: looks() }).toEqual(before)
+
+  // Back in sight, it reads git once, for what changed while it was hidden.
+  pane.isShown = true
+  await clock.advance(3000)
+  await settled()
+  expect(reads()).toBe(before.reads + 1)
+
+  // Then it looks; with nothing changed, git is not read again.
+  const shown = { reads: reads(), looks: looks() }
+  await clock.advance(3000)
+  await settled()
+  expect(looks()).toBeGreaterThan(shown.looks)
+  expect(reads()).toBe(shown.reads)
+})
+
+test('another of the plugin’s panes in sight keeps the looks going, the Files pane a tab behind', async ($, on) => {
+  const ran: { argv: string[]; cwd?: string }[] = []
+  engine(on, undefined, [], ran)
+  on('ui.panes', () => ({
+    value: [
+      { id: 'files-pane-file', title: 'client.js', isShown: true, isFocused: false, isPlaced: true },
+      { id: 'files-pane', title: 'Files: proj', isShown: false, isFocused: false, isPlaced: true },
+    ],
+  }))
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  await settled()
+
+  const looks = () => ran.filter(one => one.argv.includes('--porcelain=v2')).length
+  const before = looks()
+
+  await clock.advance(3000)
+  await settled()
+  expect(looks()).toBeGreaterThan(before)
+})
+
+test('a look git does not answer is not taken for a change', async ($, on) => {
+  const ran: { argv: string[]; cwd?: string }[] = []
+  const git: GitWorld = { dirty: [' M src/client.js'], ahead: '0' }
+  engine(on, git, [], ran)
+  panes(on, { isShown: true })
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  // The pane's first look, which notes how things are.
+  await clock.settle()
+  await clock.advance(3000)
+  await settled()
+
+  const reads = () => ran.filter(one => one.argv.includes('--abbrev-ref')).length
+  const before = reads()
+
+  git.isStateUnanswered = true
+  await clock.advance(3000)
+  await settled()
+  git.isStateUnanswered = false
+  await clock.advance(3000)
+  await settled()
+  expect(reads()).toBe(before)
 })
 
 test('two commands at once: the card shows the one still running when the other ends', async ($, on) => {
@@ -901,6 +1063,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 }
 
 test('in a big project "N changed" draws the changed files, not every file in their folders', async ($, on) => {
+  mock.clock(on)
   const names = Array.from({ length: 40 }, (_, i) => `part${String(i).padStart(2, '0')}`)
   const files = Array.from({ length: 40 }, (_, i) => entry(`file${String(i).padStart(2, '0')}.ts`, 'file', 100))
   engine(on, { dirty: [' M part07/file12.ts', ' M part31/file03.ts'], ahead: '0' }, [], [], path =>
@@ -916,7 +1079,7 @@ test('in a big project "N changed" draws the changed files, not every file in th
   expect(drawn).toEqual(['part07', 'file12.ts', 'part31', 'file03.ts'])
   // A folder opened by hand still lists everything in it.
   await ui.press({ key: 'changed' })
-  await ui.press({ key: 'dir:part00' })
+  await ui.press({ key: 'fold:part00' })
   expect(await text(ui, /^file39\.ts$/)).toBe('file39.ts')
   await ui.unmount()
 })
@@ -985,7 +1148,7 @@ test('a diff reads as rows numbered where each line is, its shared indent taken 
   const text = ['@@ -10,4 +10,4 @@ function retry() {', '       const a = 1', '-    return a', '+    return a + 1', '\\ No newline at end of file', '     }'].join('\n')
 
   expect(rowsOf(text)).toEqual([
-    { kind: 'hunk', line: 10, context: 'function retry() {' },
+    { kind: 'hunk', line: 10, old: 10, context: 'function retry() {' },
     { kind: 'same', line: 10, text: '  const a = 1' },
     { kind: 'del', line: 11, text: 'return a' },
     { kind: 'add', line: 11, text: 'return a + 1' },
@@ -1070,6 +1233,7 @@ test('git reads nothing of a repository other than the session’s', async ($, o
 })
 
 test('Show in tree works with the tree in a folder, above the project, or in another project', async ($, on) => {
+  mock.clock(on)
   world(on, {
     '/proj': [entry('src', 'dir'), entry('home.ts', 'file')],
     '/proj/src': [entry('client.js', 'file')],

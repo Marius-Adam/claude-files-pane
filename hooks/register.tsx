@@ -18,11 +18,12 @@ import {
   touchOf,
   upsert,
 } from './activity'
-import { forget, headOf, redraw, refreshGit, sessionDir } from './disk'
+import { forget, headOf, lookForChanges, redraw, refreshGit, sessionDir } from './disk'
 import { hostOf } from './editors'
+import { renderFile } from './file'
 import { renderPane } from './pane'
 import { base, rel, tailOf } from './paths'
-import { PANE } from './state'
+import { FILE_PANE, PANE } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
 // uses it, so every file names its own; state.ts lists the tags they must all share.
@@ -52,6 +53,7 @@ const setUp = async ($: EngineInterface) => {
   await $.command.register({ name: 'files', description: 'Show the Files pane: what Claude reads and edits, and the project tree' })
   void openPane($).catch(() => {})
   void refreshGit($)
+  lookForChanges($)
   // Ahead of the first ⋯, so its menu opens with the editors already found.
   void hostOf($)
 }
@@ -224,4 +226,5 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => renderPane($, e))
+  on('ui.render', { component: 'Pane', requestId: FILE_PANE }, ($, e) => renderFile($, e))
 }

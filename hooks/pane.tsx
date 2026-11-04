@@ -3,9 +3,10 @@ import type { EngineInterface, RenderInput, Space } from 'claude-code'
 
 import type { Menu, Pr, Touch, View } from '../types'
 import { absOf, cardSince, follow, reveal, toggleDiff } from './activity'
-import { rowsOf } from './diff'
-import { forget, indexFiles, listDir, redraw, refreshGit, sessionDir, SKIP } from './disk'
+import { diffView } from './diffview'
+import { forget, indexFiles, JUNK, listDir, redraw, refreshGit, sessionDir, SKIP } from './disk'
 import { folderApp, hostOf, openIn, showInFolder } from './editors'
+import { openFile } from './file'
 import { fileIcon, folderIcon } from './icons'
 import {
   ADDED,
@@ -65,6 +66,11 @@ const PR_COLORS: Record<Pr['state'], string> = { open: DONE, draft: MUTED, merge
 // click away does a native menu's. Each surface by its own: a phone that never focuses the pane
 // closes nothing on the desktop.
 const focusedWithMenu = new Set<string>()
+
+// Two presses on one folder's row this close together are a double click: a press carries no click
+// count, so the pane times them itself.
+const DOUBLE_MS = 400
+let folderPress: { path: string; at: number } | null = null
 
 // The pane: the card saying what Claude is doing, git's line, search, the toolbar, the files Claude
 // touched and the project's tree, each file with its actions behind a ⋯. Drawn by register.tsx's
@@ -135,10 +141,19 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       redraw($)
     }
 
-    // A press on a closed folder's row opens it in place; on an open one, goes into it: the tree
-    // then shows that folder as its first row, with the way up at its end. Its caret only opens and
-    // closes it.
-    const openOrEnter = async (path: string) => (v.expanded.includes(path) ? setView({ dir: path }) : toggle(path))
+    // A press on a folder's row opens or shuts it in place, as its caret does; a double click goes
+    // into it: the tree then shows that folder as its first row, with the way up at its end. The
+    // double click's first press opened or shut it, so going in puts that back.
+    const openOrEnter = async (path: string) => {
+      const at = await $.clock.now()
+      const since = folderPress?.path === path ? at - folderPress.at : -1
+      folderPress = { path, at }
+      if (since < 0 || since >= DOUBLE_MS) return toggle(path)
+
+      folderPress = null
+      await toggle(path)
+      await setView({ dir: path })
+    }
 
     // A file's actions, behind the ⋯ at the end of its row: open under the row for one file at a
     // time, in the list it was pressed in. A diff belongs to the actions it was opened from.
@@ -249,7 +264,6 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           paddingX={0}
           paddingY={0}
           flexShrink={0}
-          hover={{ backgroundColor: state === 'on' ? tint(FOLDER, '2e') : HOVER }}
         >
           {button}
         </Box>
@@ -266,62 +280,25 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Text size="footnote">⋯</Text>
       </Button>
     )
-
-    // A diff as an editor shows one, a row a line: its number in the file, the change's mark, the
-    // line cut at the row's end. Where the surface paints, an added or removed row is tinted;
-    // the terminal colours its text instead. Each hunk opens on the line it starts at and the
-    // function around it, as git names it.
-    const diffView = (text: string, id: string) => {
-      const rows = rowsOf(text)
-      const digits = String(Math.max(...rows.map(row => row.line))).length
-      const number = (n: number | null) => (n === null ? '' : String(n)).padStart(digits, '\u00a0')
-      const MARKS = { add: '+', del: '−', same: '\u00a0' } as const
-
-      return (
-        <Box key={`diffview:${id}`} flexDirection="column" {...rounded(CARD_EDGE)} paddingY={xs} overflow="hidden">
-          {rows.map((row, i) =>
-            row.kind === 'hunk' ? (
-              <Box key={`hunk:${id}:${i}`} gap={1} paddingX={1} marginTop={i === 0 ? undefined : xs} overflow="hidden">
-                <Text mono dimColor size="footnote">
-                  {number(null)}
-                </Text>
-                <Text dimColor size="footnote" wrap="truncate-end">
-                  {row.context ? `Line ${row.line} · ${row.context}` : `Line ${row.line}`}
-                </Text>
-              </Box>
-            ) : (
-              <Box
-                key={`line:${id}:${i}`}
-                gap={1}
-                paddingX={1}
-                overflow="hidden"
-                backgroundColor={isRich && row.kind !== 'same' ? tint(row.kind === 'add' ? ADDED : REMOVED, '1f') : undefined}
-              >
-                <Text mono dimColor size="footnote">
-                  {number(row.line)}
-                </Text>
-                <Text mono size="footnote" color={row.kind === 'add' ? ADDED : row.kind === 'del' ? REMOVED : undefined} dimColor={row.kind === 'same'}>
-                  {MARKS[row.kind]}
-                </Text>
-                <Box flexShrink={1} minWidth={0} overflow="hidden">
-                  <Text
-                    mono
-                    size="footnote"
-                    wrap="truncate-end"
-                    color={isRich || row.kind === 'same' ? undefined : row.kind === 'add' ? ADDED : REMOVED}
-                    dimColor={row.kind === 'same' && !isRich}
-                  >
-                    {/* A line cut at its end draws on one line, where spaces would collapse: its indent
-                        is held in non-breaking ones. */}
-                    {row.text.replace(/^ +/, lead => '\u00a0'.repeat(lead.length)) || '\u00a0'}
-                  </Text>
-                </Box>
-              </Box>
-            ),
-          )}
-        </Box>
+    // Where a press layer spans a file's row, the ⋯ floats over it: an absolute Box paints over
+    // every Box in the flow, and only a later absolute one paints over it. A blank twin keeps the
+    // ⋯'s room at the row's end, as wide as it is, so the counts and marks do not slide under it.
+    const moreRoom = (where: Menu['where'], abs: string) =>
+      canLayer ? (
+        <Button key={`room:${where}:${abs}`} plain dimColor onPress={() => toggleActions(where, abs)}>
+          <Text size="footnote" color={CLEAR}>
+            ⋯
+          </Text>
+        </Button>
+      ) : (
+        more(where, abs)
       )
-    }
+    const moreOver = (where: Menu['where'], abs: string) =>
+      canLayer ? (
+        <Box position="absolute" top={0} right={0} bottom={0} alignItems="center">
+          {more(where, abs)}
+        </Box>
+      ) : null
 
     // A file's row and, while its ⋯ is pressed, its actions in a popover over the row above, at the
     // ⋯'s end, laid out as the app's own menus are: put it in the prompt and copy its path; see its
@@ -382,6 +359,14 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       }
       const groups: Item[][] = [
         [
+          {
+            key: 'file',
+            label: 'Open',
+            onPress: async () => {
+              await closeActions()
+              await openFile($, abs)
+            },
+          },
           { key: 'mention', label: '@ Mention', onPress: mention },
           { key: 'copy', label: 'Copy', onPress: () => toggleSub('copy'), isSub: true, isOpen: sub === 'copy' },
           ...(sub === 'copy'
@@ -475,7 +460,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           ? [
               <Box key={`diff:${id}`} flexDirection="column" gap={xs} paddingLeft={indent + 1} paddingRight={1}>
                 {open.text ? (
-                  diffView(open.text, id)
+                  diffView(elements, open.text, id, { isRich, xs, sides: 1 })
                 ) : (
                   <Text dimColor size="footnote">
                     No changes since the last commit.
@@ -532,6 +517,20 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // part clips the layer, so it holds `overflow="hidden"`.
     const pressAway = (key: string) => (acts ? pressAnywhere(`away:${key}`, closeActions) : null)
 
+    // A press on a file's row opens it in the file pane. Where the surface lays a press over a row,
+    // the layer spans the whole row, as a folder's does, so the two light alike under the pointer.
+    // It comes first in the row, and the ⋯ floats over it (`moreOver`): the ⋯ stays its own.
+    // On the terminal the name is the Button. VS Code, which does neither, opens it from the ⋯.
+    const openLayer = (where: Menu['where'], abs: string) => (canLayer ? pressAnywhere(`open-row:${where}:${abs}`, () => openFile($, abs)) : null)
+    const opens = (where: Menu['where'], abs: string, name: JSX.Element) =>
+      isRich ? (
+        name
+      ) : (
+        <Button key={`open-row:${where}:${abs}`} plain onPress={() => openFile($, abs)}>
+          {name}
+        </Button>
+      )
+
     const dot = (color: string, isLive = false, size = 12) =>
       Svg ? <Svg source={dotSvg(color, isLive)} alt={isLive ? 'live' : 'mark'} width={size} height={size} /> : <Text color={color}>●</Text>
 
@@ -547,7 +546,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
     // A rounded chip of a color's tint, a live one with a pulsing dot. It never shrinks, which would
     // wrap its label ("0 / files") in a narrow header.
-    // Given a press, the pill is a control: it lights under the pointer, a press anywhere on it counts.
+    // Given a press, the pill is a control: a press anywhere on it counts.
     // Given an `href`, its label is a link to it.
     const pill = (label: string, color: string, isLive = false, press?: { key: string; onPress: () => unknown }, href?: string) =>
       isRich && (canLayer || !press) ? (
@@ -560,12 +559,21 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           gap={xs}
           alignItems="center"
           flexShrink={0}
-          {...(press ? { overflow: 'hidden', hover: { backgroundColor: tint(color, '3d') } } : {})}
+          {...(press ? { overflow: 'hidden' } : {})}
         >
           {isLive && dot(color, true)}
-          <Text color={color} size="footnote" weight="semibold">
-            {href ? <Link href={href}>{label}</Link> : label}
-          </Text>
+          {/* The desktop opens a Link it draws itself, not one inside a Text: the label goes in it. */}
+          {href ? (
+            <Link key={`link:${href}`} href={href}>
+              <Text color={color} size="footnote" weight="semibold">
+                {label}
+              </Text>
+            </Link>
+          ) : (
+            <Text color={color} size="footnote" weight="semibold">
+              {label}
+            </Text>
+          )}
           {press && pressAnywhere(press.key, press.onPress)}
         </Box>
       ) : press ? (
@@ -771,12 +779,12 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const walk = async (dir: string, depth: number): Promise<void> => {
       const entries = await listDir($, listPath(home, dir))
       const sorted = entries
+        .filter(entry => !JUNK.has(entry.name))
         .filter(entry => !SKIP.has(entry.name) || v.showHidden)
         .filter(entry => v.showHidden || !entry.name.startsWith('.'))
         .filter(entry => !isFiltered || (entry.kind === 'dir' ? changedUnder(join(dir, entry.name)) > 0 : changed.has(join(dir, entry.name))))
-        .sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name))
-      // A file keeps the chevron's width only to line up with a folder beside it.
-      const hasDirs = sorted.some(entry => entry.kind === 'dir')
+        // Folders first, then names as a person reads them: `file2` before `file10`.
+        .sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name, undefined, { numeric: true }))
       for (const entry of sorted) {
         if (rows.length >= TREE_ROWS) return
 
@@ -804,7 +812,6 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               paddingX={1}
               paddingY={0}
               overflow="hidden"
-              hover={{ backgroundColor: HOVER }}
             >
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
                 {/* The chevron sits close to the folder's icon; a press on it or the name opens it. */}
@@ -812,9 +819,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   {chevron(isOpen, () => toggle(path), `caret:${path}`)}
                   {icon(folderIcon(entry.name, isOpen), entry.name, '▪', folderColor, 16)}
                 </Box>
-                {/* Where the surface paints but lays no press over the row, a Button is filled: the
-                    name is text there, and the caret takes the press. */}
-                {isRich && !canLayer ? (
+                {/* Where the surface paints the name is text, as a file's is: the desktop pads a
+                    Button, which would set the name off from a file's, and VS Code fills one. A
+                    press on the row or the caret opens it there. */}
+                {isRich ? (
                   name
                 ) : (
                   <Button key={`dir:${path}`} plain onPress={() => openOrEnter(path)}>
@@ -863,29 +871,35 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               paddingY={0}
               backgroundColor={background}
               overflow="hidden"
-              hover={{ backgroundColor: background ?? HOVER }}
             >
               {touch?.isActive && shimmer(accentOf(touch))}
-              <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
-                {/* The chevron's width, unseen, so a file's icon lines up with a sibling folder's. */}
+              {openLayer('tree', join(home, path))}
+              <Box gap={1} alignItems="center" paddingLeft={indent} flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
+                {/* The chevron's width, unseen, in every file's row: its icon lines up with a sibling
+                    folder's, and with the row above when no folder is beside it. */}
                 <Box gap={xs} alignItems="center">
-                  {hasDirs && chevron()}
+                  {chevron()}
                   {chip(entry.name)}
                 </Box>
-                <Text
-                  color={accent}
-                  dimColor={!accent && isIgnored(path, false)}
-                  weight={touch?.isActive || touch?.isCommitted || isDirty ? 'semibold' : undefined}
-                  wrap="truncate-end"
-                >
-                  {entry.name}
-                </Text>
+                {opens(
+                  'tree',
+                  join(home, path),
+                  <Text
+                    color={accent}
+                    dimColor={!accent && isIgnored(path, false)}
+                    weight={touch?.isActive || touch?.isCommitted || isDirty ? 'semibold' : undefined}
+                    wrap="truncate-end"
+                  >
+                    {entry.name}
+                  </Text>,
+                )}
               </Box>
               <Box flexShrink={0} gap={1} alignItems="center">
                 {right}
                 {mark(path)}
-                {more('tree', join(home, path))}
+                {moreRoom('tree', join(home, path))}
               </Box>
+              {moreOver('tree', join(home, path))}
             </Box>
           )
 
@@ -919,7 +933,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const query = v.query.trim().toLowerCase()
     const matches = query ? rank(await indexFiles($, home), query, MATCHES) : []
 
-    if (!query) await walk(v.dir, 1)
+    if (!query) await walk(v.dir, 0)
 
     const totals = Object.values(g?.lines ?? {}).reduce<[number, number]>(([a, d], [x, y]) => [a + x, d + y], [0, 0])
     // The pull request found for the branch shown: one found for a branch since left is not its.
@@ -1151,16 +1165,20 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 paddingRight={0}
                 paddingY={0}
                 overflow="hidden"
-                hover={{ backgroundColor: background ?? HOVER }}
               >
                 {one.isActive && shimmer(accentOf(one))}
+                {openLayer('touched', abs)}
                 {/* One line: the name keeps its room, the folder gives way from its start. */}
-                <Box gap={1} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
+                <Box gap={1} alignItems="center" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
                   {chip(base(one.path))}
                   <Box flexShrink={1}>
-                    <Text color={accentOf(one)} weight="semibold" wrap="truncate-end">
-                      {base(one.path)}
-                    </Text>
+                    {opens(
+                      'touched',
+                      abs,
+                      <Text color={accentOf(one)} weight="semibold" wrap="truncate-end">
+                        {base(one.path)}
+                      </Text>,
+                    )}
                   </Box>
                   <Box flexShrink={8} minWidth={0}>
                     <Text dimColor size="footnote" wrap="truncate-start">
@@ -1174,8 +1192,9 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   <Text dimColor size="footnote" tabular>
                     {timeOf(one.at)}
                   </Text>
-                  {more('touched', abs)}
+                  {moreRoom('touched', abs)}
                 </Box>
+                {moreOver('touched', abs)}
               </Box>,
               'touched',
               abs,
@@ -1217,15 +1236,20 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   paddingRight={0}
                   paddingY={0}
                   overflow="hidden"
-                  hover={{ backgroundColor: HOVER }}
                 >
-                  <Box gap={1} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
+                  {openLayer('match', join(home, path))}
+                  <Box gap={1} alignItems="center" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
                     {chip(base(path))}
-                    <Text color={byPath.has(path) ? accentOf(byPath.get(path)!) : changed.has(path) ? DIRTY : undefined} wrap="truncate-start">
-                      {path}
-                    </Text>
+                    {opens(
+                      'match',
+                      join(home, path),
+                      <Text color={byPath.has(path) ? accentOf(byPath.get(path)!) : changed.has(path) ? DIRTY : undefined} wrap="truncate-start">
+                        {path}
+                      </Text>,
+                    )}
                   </Box>
-                  <Box flexShrink={0}>{more('match', join(home, path))}</Box>
+                  <Box flexShrink={0}>{moreRoom('match', join(home, path))}</Box>
+                  {moreOver('match', join(home, path))}
                 </Box>,
                 'match',
                 join(home, path),

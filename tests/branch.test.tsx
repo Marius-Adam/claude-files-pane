@@ -148,6 +148,21 @@ test('in a linked worktree, the branch row says whose worktree it is and links t
   }
 })
 
+test('on the desktop the pull request’s pill is a link holding its label, which the app opens', async ($, on) => {
+  engine(on, { branch: 'fix/retry', isWorktree: false, gh: { number: 42, state: 'OPEN', isDraft: false } })
+
+  const ui = await mounted($, 'desktop')
+  type Node = { type: string; props: { href?: string }; children?: (Node | string)[] }
+  const [link] = (await ui.findAll({ type: 'Link' })) as Node[]
+  const label = (node: Node): string => (node.children ?? []).map(child => (typeof child === 'string' ? child : label(child))).join('')
+
+  // The app opens a Link it draws itself; one drawn inside a Text it draws as text only.
+  expect(link?.props.href).toBe('https://github.com/someone/shop/pull/42')
+  expect(link?.children?.map(child => (typeof child === 'string' ? 'string' : child.type))).toEqual(['Text'])
+  expect(label(link!).trim()).toBe('#42 open')
+  await ui.unmount()
+})
+
 test('a draft pull request says so, and a merged one says merged', async ($, on) => {
   const world: World = { branch: 'feat/search', isWorktree: false, gh: { number: 7, state: 'OPEN', isDraft: true } }
   engine(on, world)

@@ -155,3 +155,17 @@ export const BLANK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" hei
 // A menu's divider: a hairline as wide as the menu lets it be, its own width far past any menu's.
 export const RULE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1" viewBox="0 0 1000 1" preserveAspectRatio="none"><rect width="1000" height="1" fill="${CARD_EDGE}"/></svg>`
 export const CARETS = ['▸', '▾'] as const
+
+// A history's day, as GitHub marks one: the commit glyph, a ring on a line.
+export const COMMIT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16"><g fill="none" stroke="${MUTED}" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M1 8h4M11 8h4"/></g></svg>`
+
+// Who made a commit, where no picture of them is: their initial on a disc, its color picked by
+// their name, so one author's commits share it.
+const AVATARS = [READ, EDIT, DONE, FOLDER, WRITE, DIRTY, REMOVED]
+
+export const avatarSvg = (name: string) => {
+  const color = AVATARS[[...name].reduce((sum, char) => sum + char.charCodeAt(0), 0) % AVATARS.length]!
+  const initial = (name.trim()[0] ?? '?').toUpperCase().replace(/[&<>"]/g, char => `&#${char.charCodeAt(0)};`)
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="${tint(color, '40')}"/><text x="8" y="11.5" text-anchor="middle" font-family="-apple-system, system-ui, sans-serif" font-size="9" font-weight="600" fill="${color}">${initial}</text></svg>`
+}
