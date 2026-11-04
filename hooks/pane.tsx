@@ -4,7 +4,7 @@ import type { EngineInterface, RenderInput, Space } from 'claude-code'
 import type { Menu, Pr, Touch, View } from '../types'
 import { absOf, cardSince, follow, reveal, toggleDiff } from './activity'
 import { rowsOf } from './diff'
-import { forget, indexFiles, listDir, redraw, refreshGit, sessionDir, SKIP } from './disk'
+import { forget, indexFiles, JUNK, listDir, redraw, refreshGit, sessionDir, SKIP } from './disk'
 import { folderApp, hostOf, openIn, showInFolder } from './editors'
 import { fileIcon, folderIcon } from './icons'
 import {
@@ -784,12 +784,12 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const walk = async (dir: string, depth: number): Promise<void> => {
       const entries = await listDir($, listPath(home, dir))
       const sorted = entries
+        .filter(entry => !JUNK.has(entry.name))
         .filter(entry => !SKIP.has(entry.name) || v.showHidden)
         .filter(entry => v.showHidden || !entry.name.startsWith('.'))
         .filter(entry => !isFiltered || (entry.kind === 'dir' ? changedUnder(join(dir, entry.name)) > 0 : changed.has(join(dir, entry.name))))
-        .sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name))
-      // A file keeps the chevron's width only to line up with a folder beside it.
-      const hasDirs = sorted.some(entry => entry.kind === 'dir')
+        // Folders first, then names as a person reads them: `file2` before `file10`.
+        .sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name, undefined, { numeric: true }))
       for (const entry of sorted) {
         if (rows.length >= TREE_ROWS) return
 
@@ -878,9 +878,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             >
               {touch?.isActive && shimmer(accentOf(touch))}
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
-                {/* The chevron's width, unseen, so a file's icon lines up with a sibling folder's. */}
+                {/* The chevron's width, unseen, in every file's row: its icon lines up with a sibling
+                    folder's, and with the row above when no folder is beside it. */}
                 <Box gap={xs} alignItems="center">
-                  {hasDirs && chevron()}
+                  {chevron()}
                   {chip(entry.name)}
                 </Box>
                 <Text

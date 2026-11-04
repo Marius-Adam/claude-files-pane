@@ -231,6 +231,19 @@ test('a redraw does not list the tree again; a command does', async ($, on) => {
   await ui.unmount()
 })
 
+test('the tree reads numbers in names as numbers, and shows no file the system leaves for itself', async ($, on) => {
+  world(on, {
+    '/proj': ['file10.ts', 'file2.ts', 'file1.ts', '.DS_Store', 'Thumbs.db', 'desktop.ini', '.env'].map(name => entry(name, 'file')).concat(entry('__MACOSX', 'dir')),
+  })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const names = (await reading(ui)).split(' ').filter(word => /^(file\d+\.ts|\.DS_Store|Thumbs\.db|desktop\.ini|__MACOSX|\.env)$/.test(word))
+
+  expect(names).toEqual(['.env', 'file1.ts', 'file2.ts', 'file10.ts'])
+  await ui.unmount()
+})
+
 test('the first turn sets up /files when session.start never reached the mod', async ($, on) => {
   const registered: string[] = []
   engine(on, undefined, registered)
@@ -265,7 +278,7 @@ test('the tree shows hidden files until asked, and opens a folder', async ($, on
   await ui.unmount()
 })
 
-test('a file keeps the chevron space only beside a folder', async ($, on) => {
+test('every file keeps the chevron space, beside a folder or not', async ($, on) => {
   mock.clock(on)
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
@@ -273,10 +286,11 @@ test('a file keeps the chevron space only beside a folder', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   const blanks = async () => ((await ui.findAll({ type: 'Svg' })) as unknown as { props: { alt: string } }[]).filter(one => one.props.alt === 'file')
 
-  // README.md and .env sit beside src/ and tests/; client.js has no folder beside it in src/.
+  // README.md and .env sit beside src/ and tests/; client.js has no folder beside it in src/, and
+  // lines up under src/'s icon all the same.
   await ui.press({ key: 'dir:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
-  expect(await blanks()).toHaveLength(3)
+  expect(await blanks()).toHaveLength(4)
   await ui.unmount()
 })
 

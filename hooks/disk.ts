@@ -16,7 +16,11 @@ const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, 
 // GitHub CLI commands that change nothing, run only where the session's own repository is
 // (isTrusted).
 
-export const SKIP = new Set(['.git'])
+// A version control system's own folders: listed only with Dotfiles on, and never counted or searched.
+export const SKIP = new Set(['.git', '.svn', '.hg', 'CVS'])
+
+// What an operating system leaves in folders for itself, shown nowhere, as VS Code and the app hide it.
+export const JUNK = new Set(['.DS_Store', '__MACOSX', 'Thumbs.db', 'desktop.ini'])
 
 // A pane draws again only when asked: every write ends with this.
 export function redraw($: EngineInterface) {
@@ -449,7 +453,7 @@ export async function indexFiles($: EngineInterface, home: string): Promise<stri
   const listed = (await isTrusted($, home)) ? await run($, ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], 10000, home) : null
 
   if (listed && listed.exitCode === 0) {
-    fileIndex = fieldsOf(listed.stdout).filter(Boolean)
+    fileIndex = fieldsOf(listed.stdout).filter(path => path && !JUNK.has(base(path)))
 
     return fileIndex
   }
@@ -462,7 +466,7 @@ export async function indexFiles($: EngineInterface, home: string): Promise<stri
     const entries = await $.fs.list(listPath(home, dir)).catch(() => [])
 
     for (const entry of entries) {
-      if (SKIP.has(entry.name) || entry.name === 'node_modules') continue
+      if (SKIP.has(entry.name) || JUNK.has(entry.name) || entry.name === 'node_modules') continue
       if (entry.kind === 'dir') queue.push(join(dir, entry.name))
       else found.push(join(dir, entry.name))
     }
