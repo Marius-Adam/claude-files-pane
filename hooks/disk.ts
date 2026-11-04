@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { Git, Mark, Op, Pr } from '../types'
+import type { Commit, FileText, Git, Mark, Op, Pr } from '../types'
 import { base, dirOf, join, listPath, slashed, unfiltered } from './paths'
 import { DEFAULT_VIEW } from './state'
 
@@ -10,6 +10,7 @@ import { DEFAULT_VIEW } from './state'
 const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-6' })
 const pr = atom({ plugin: 'files-pane', key: 'pr' } as const, null, { shape: 'pr-2' })
 const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-4' })
+const opened = atom({ plugin: 'files-pane', key: 'opened' } as const, null, { shape: 'opened-1' })
 
 // What the pane reads of the disk: git's view of the project shown, the branch's pull request,
 // folder listings and the file index search walks. All of it read-only: listings, and git and
@@ -477,11 +478,115 @@ export async function indexFiles($: EngineInterface, home: string): Promise<stri
   return found
 }
 
-// What the pane holds of the disk, dropped whenever it may have changed: search's index and the
-// tree's listings.
+// What the pane holds of the disk, dropped whenever it may have changed: search's index, the
+// tree's listings and what the file pane read.
 export const forget = () => {
   fileIndex = null
   listings.clear()
+  readings.clear()
+}
+
+// What the file pane read (a file's text, its diff, its history, a commit's change to it), kept
+// between redraws by what was asked, as the tree's listings are; a failed read is not kept.
+const readings = new Map<string, Promise<unknown>>()
+
+function kept<T>(key: string, readIt: () => Promise<T>): Promise<T> {
+  let reading = readings.get(key) as Promise<T> | undefined
+
+  if (!reading) {
+    reading = readIt().catch(error => {
+      readings.delete(key)
+      throw error
+    })
+    readings.set(key, reading)
+  }
+
+  return reading
+}
+
+// The file pane shows a file's text up to this many characters (a drawing draws 100000 in all),
+// and none past FILE_BYTES on the disk.
+const FILE_CHARS = 90000
+const FILE_BYTES = 2 * 1024 * 1024
+
+// A file's text, cut at the end of a line within FILE_CHARS, with how many lines were left out.
+export function textOf($: EngineInterface, abs: string): Promise<FileText> {
+  return kept(`text\0${abs}`, async (): Promise<FileText> => {
+    const stat = await $.fs.stat(abs).catch(() => null)
+
+    if (!stat || stat.kind !== 'file') return { reason: 'unreadable' }
+    if (stat.size > FILE_BYTES) return { reason: 'large' }
+
+    const text = await $.fs.read(abs).catch(() => null)
+
+    if (text === null) return { reason: 'unreadable' }
+    // A NUL is what git, too, takes for a binary file.
+    if (text.includes('\0')) return { reason: 'binary' }
+
+    // Windows' line ends read as one, and no control character reaches the drawing but tab and
+    // newline: an escape in a file must not reach a terminal.
+    const lines = printable(text.replace(/\r\n?/g, '\n')).replace(/\n$/, '')
+
+    if (lines.length <= FILE_CHARS) return { text: lines, more: 0 }
+
+    const cut = lines.slice(0, lines.lastIndexOf('\n', FILE_CHARS))
+
+    return { text: cut, more: lines.slice(cut.length + 1).split('\n').length }
+  })
+}
+
+// The file pane's diffs: as the ⋯'s, with room for more lines, within what a drawing draws.
+const PANE_DIFF = { lines: 2000, chars: FILE_CHARS }
+
+export function keptDiffOf($: EngineInterface, abs: string) {
+  return kept(`diff\0${abs}`, () => diffOf($, abs, PANE_DIFF))
+}
+
+// The file's history, newest first, at most HISTORY commits, through renames. Null outside the
+// session's repository: see isTrusted.
+const HISTORY = 50
+
+export function historyOf($: EngineInterface, abs: string): Promise<Commit[] | null> {
+  return kept(`history\0${abs}`, async () => {
+    const dir = dirOf(abs)
+
+    if (!(await isTrusted($, dir))) return null
+
+    const out = await run(
+      $,
+      ['git', '-c', 'core.quotepath=false', 'log', '--follow', '--no-color', '--format=%x1e%h%x1f%an%x1f%at%x1f%s', '--name-only', '-n', String(HISTORY), '--', abs],
+      10000,
+      dir,
+    )
+
+    if (!out || out.exitCode !== 0) return null
+
+    return out.stdout.split('\x1e').flatMap(record => {
+      const [head = '', ...rest] = record.split('\n')
+      const [hash, author, at, subject] = head.split('\x1f')
+      const path = rest.find(line => line.trim() !== '')?.trim()
+
+      return hash && path && /^[0-9a-f]+$/.test(hash) ? [{ hash, author: author ?? '', at: Number(at) * 1000, subject: subject ?? '', path }] : []
+    })
+  })
+}
+
+// What `commit` changed in the file, at `path` from the repository's top, as hunks.
+export function commitDiffOf($: EngineInterface, abs: string, commit: Commit): Promise<{ text: string; more: number }> {
+  return kept(`commit\0${abs}\0${commit.hash}`, async () => {
+    const dir = dirOf(abs)
+
+    if (!/^[0-9a-f]+$/.test(commit.hash) || !(await isTrusted($, dir))) return { text: '', more: 0 }
+
+    const out = await run(
+      $,
+      ['git', 'show', '--format=', '--no-color', '--no-ext-diff', '--no-textconv', '-U2', commit.hash, '--', `:(top,literal)${commit.path}`],
+      10000,
+      dir,
+    )
+
+    return hunksOf(out?.stdout ?? '', PANE_DIFF)
+  })
 }
 
 // What changes on the disk without Claude (a file made in an editor, a branch checked out in a
@@ -497,6 +602,9 @@ let isLooking = false
 // Whether the last look found the pane in sight, and what `printOf` gave it, for which project.
 let wasShown = true
 let gitSeen: { root: string; print: string } | null = null
+// The file open in the file pane as the last look found it: its path, and its size and when it
+// changed.
+let fileSeen: { path: string; stamp: string } | null = null
 
 export function lookForChanges($: EngineInterface) {
   if (isLooking) return
@@ -564,14 +672,28 @@ async function lookAgain($: EngineInterface): Promise<number> {
   const isGitMoved = print !== null && seen !== null && seen.root === root && seen.print !== print
 
   if (print !== null) gitSeen = { root, print }
+
+  // The file open in the file pane, changed on the disk (an editor saved it), or git moved under
+  // it: what the pane read of it is read again. Its size and time are enough to tell.
+  const open = await read($, opened)
+  const stat = open ? await $.fs.stat(open.path).catch(() => null) : null
+  const file = open ? { path: open.path, stamp: `${stat?.size ?? -1}\0${stat?.mtimeMs ?? -1}` } : null
+  const isFileMoved = file !== null && fileSeen?.path === file.path && fileSeen.stamp !== file.stamp
+
+  fileSeen = file
+  if (isFileMoved || isGitMoved || isBack) readings.clear()
+
   if (isRenamed || isGitMoved || isBack) void refreshGit($)
-  else if (isResized) redraw($)
+  else if (isResized || isFileMoved) redraw($)
 
   return folders.length
 }
 
 // A diff the pane shows whole up to this many lines; past it, cut where a hunk ends.
 const DIFF_LINES = 400
+
+// How much of a diff to show: at most `lines` lines and `chars` characters.
+type Room = { lines: number; chars: number }
 
 // Lines Code draws: no control character but tab and newline.
 const printable = (line: string) => line.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
@@ -590,7 +712,7 @@ const recount = (hunk: string[]) => {
 // file git does not track yet, or any file before the first commit, whole, as added lines. Past
 // DIFF_LINES the rest is left out, and counted.
 // None outside the session's repository: see isTrusted.
-export async function diffOf($: EngineInterface, abs: string): Promise<{ text: string; more: number }> {
+export async function diffOf($: EngineInterface, abs: string, room: Room = { lines: DIFF_LINES, chars: Infinity }): Promise<{ text: string; more: number }> {
   const dir = dirOf(abs)
 
   if (!(await isTrusted($, dir))) return { text: '', more: 0 }
@@ -602,6 +724,13 @@ export async function diffOf($: EngineInterface, abs: string): Promise<{ text: s
   const sinceHead = tracked && tracked.exitCode === 0 ? await run($, ['git', 'diff', '--no-color', '--no-ext-diff', '-U2', 'HEAD', '--', abs], 10000, dir) : null
   // `--no-index` exits 1 when the files differ, which they always do: its output is what counts.
   const out = (sinceHead && sinceHead.exitCode !== 128 ? sinceHead : await run($, whole, 10000, dir))?.stdout ?? ''
+
+  return hunksOf(out, room)
+}
+
+// A diff's hunks, from git's output, whole while they fit `room`; past it, cut where a hunk ends,
+// and the rest counted.
+function hunksOf(out: string, room: Room): { text: string; more: number } {
   const all = out.split('\n').map(printable)
   const start = all.findIndex(line => line.startsWith('@@'))
 
@@ -610,12 +739,21 @@ export async function diffOf($: EngineInterface, abs: string): Promise<{ text: s
   const lines = all.slice(start)
 
   while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
-  if (lines.length <= DIFF_LINES) return { text: lines.join('\n'), more: 0 }
+
+  // How many lines fit: `room.lines` at most, each with its newline within `room.chars`.
+  let fit = 0
+
+  for (let chars = 0; fit < Math.min(lines.length, room.lines); fit++) {
+    chars += lines[fit]!.length + 1
+    if (chars > room.chars) break
+  }
+
+  if (fit === lines.length) return { text: lines.join('\n'), more: 0 }
 
   // Cut where the last hunk that starts in room begins; a first hunk too long for the room is
   // cut inside, its header counted again.
-  const lastStart = lines.slice(0, DIFF_LINES + 1).findLastIndex(line => line.startsWith('@@'))
-  const kept = lastStart > 0 ? lines.slice(0, lastStart) : recount(lines.slice(0, DIFF_LINES))
+  const lastStart = lines.slice(0, fit + 1).findLastIndex(line => line.startsWith('@@'))
+  const shown = lastStart > 0 ? lines.slice(0, lastStart) : recount(lines.slice(0, fit))
 
-  return { text: kept.join('\n'), more: lines.length - kept.length }
+  return { text: shown.join('\n'), more: lines.length - shown.length }
 }

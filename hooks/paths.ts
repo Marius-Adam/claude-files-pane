@@ -36,6 +36,38 @@ export const timeOf = (ms: number) => {
   return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
 }
 
+// A day as the pane prints it, on the person's calendar: `2026-11-03`.
+export const dayOf = (ms: number) => {
+  const at = new Date(ms)
+
+  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// A day as GitHub heads a history with it: `Nov 3, 2026`.
+export const longDayOf = (ms: number) => {
+  const at = new Date(ms)
+
+  return `${MONTHS[at.getMonth()]} ${at.getDate()}, ${at.getFullYear()}`
+}
+
+// How long before `now` a moment was, in its largest whole unit: `3 days ago`.
+export const agoOf = (ms: number, now: number) => {
+  const minutes = Math.floor((now - ms) / 60000)
+
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${plural(minutes, 'minute')} ago`
+  if (minutes < 60 * 24) return `${plural(Math.floor(minutes / 60), 'hour')} ago`
+
+  const days = Math.floor(minutes / (60 * 24))
+
+  if (days < 30) return `${plural(days, 'day')} ago`
+  if (days < 365) return `${plural(Math.floor(days / 30), 'month')} ago`
+
+  return `${plural(Math.floor(days / 365), 'year')} ago`
+}
+
 export const sizeOf = (bytes: number) => {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`

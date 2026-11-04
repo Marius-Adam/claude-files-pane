@@ -1,6 +1,8 @@
 import type { View } from '../types'
 
 export const PANE = 'files-pane'
+// The pane an opened file shows in, a tab beside the Files pane.
+export const FILE_PANE = 'files-pane-file'
 
 // Hidden files show by default, as in VS Code's explorer: the toolbar offers to hide them.
 export const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], showSizes: false, showHidden: true, changed: null }
@@ -21,3 +23,4 @@ export const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], 
 //   menu     'menu-2'     the file whose actions are open, and their submenu: Menu | null
 //   status   'status-1'   the commit line at the pane's foot: Status | null
 //   tick     (none)       bumped by Refresh, so the tree is listed again
+//   opened   'opened-1'   the file open in the file pane, and its tab: Opened | null

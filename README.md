@@ -101,10 +101,11 @@ claude plugin uninstall files-pane@marius-adam
 - A click on a folder opens or closes it; a double click goes into it. The tree's first row names the folder you are in, and its **↑ Up** leads to the folder above.
 - **N changed** shows only the files git reports changed, in their folders; press it again for the whole tree.
 - Colours tell you what happened to a file: read **purple**, edited **orange**, uncommitted **yellow**, committed **green**.
+- A press on a file opens it in a pane of its own, beside the Files pane, with three tabs: **File**, its text with its lines numbered (a Markdown file as its preview, a press from its source), **Diff**, what changed since the last commit, and **History**, the commits that changed it, each a press from what it changed. In VS Code, open it from its **⋯**.
 - What changes without Claude, such as a file you make in your editor or a branch you check out in a terminal, shows within a few seconds while the pane is in sight.
-- A file's **⋯** menu can `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor, Finder or Explorer.
+- A file's **⋯** menu can open it, `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor, Finder or Explorer.
 
-**Privacy:** the pane is read-only. It lists folders, reads git, asks GitHub's CLI for the branch's pull request and looks for your editors, sends nothing else anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows). [SECURITY.md](SECURITY.md#what-the-pane-runs) lists every command it runs, and says how to report a vulnerability.
+**Privacy:** the pane is read-only. It lists folders, reads the files you open, reads git, asks GitHub's CLI for the branch's pull request and looks for your editors, sends nothing else anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows). [SECURITY.md](SECURITY.md#what-the-pane-runs) lists every command it runs, and says how to report a vulnerability.
 
 **Tokens:** the pane costs none. Its hooks hand Claude's events on unchanged, and what it shows comes from your folders and git, so Claude never sees it. Only **@ Mention** adds to your prompt, the same as typing `@file`.
 
@@ -166,8 +167,9 @@ Pull requests go to `staging`. A release is one pull request from `staging` to `
 | :-- | :-- |
 | `hooks/register.tsx` | The mod's hooks: what Claude does reaches the pane through these |
 | `hooks/pane.tsx` | The pane's drawing: the card, git's line, search, the toolbar, the touched list and the tree |
+| `hooks/file.tsx` | The file pane: a file opened from the tree, with its File, Diff and History tabs |
 | `hooks/activity.ts` | Following Claude: the card's timing, commits, diffs |
-| `hooks/disk.ts` | Git, the branch's pull request, folder listings, the search index, a file's diff |
+| `hooks/disk.ts` | Git, the branch's pull request, folder listings, the search index, a file's text, diff and history |
 | `hooks/paths.ts` | Paths and sizes as the pane prints them, and search ranking |
 | `hooks/look.ts` | Colours, type chips and SVGs |
 | `hooks/icons.ts`, `icon-svgs.ts` | Which vscode-icons icon a file or folder gets, and the SVGs (generated) |

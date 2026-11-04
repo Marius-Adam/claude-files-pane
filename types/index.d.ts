@@ -78,6 +78,18 @@ export type Menu = { path: string; where: 'tree' | 'match' | 'touched'; sub: 'co
 // What the touched list shows: this turn's files, or every file Claude touched this session.
 export type Scope = 'turn' | 'session'
 
+// The file open in the file pane, absolute, and what it shows: the file (as source, or for
+// Markdown as a preview), its diff since HEAD, or its history, with the commit opened there.
+export type Opened = { path: string; tab: 'file' | 'diff' | 'history'; isPreview: boolean; commit: string | null }
+
+// A file's text as the file pane shows it, cut at the end of a line, with how many lines were left
+// out; or why it shows none.
+export type FileText = { text: string; more: number } | { reason: 'binary' | 'large' | 'unreadable' }
+
+// A commit that changed a file: its short hash, author, when (milliseconds since the epoch), its
+// first line, and the file's path then, from the repository's top (it may have been renamed since).
+export type Commit = { hash: string; author: string; at: number; subject: string; path: string }
+
 declare module 'claude-code' {
   interface PluginState {
     'files-pane': {
@@ -94,6 +106,7 @@ declare module 'claude-code' {
       menu: Shaped<Menu | null>
       status: Shaped<Status | null>
       tick: number
+      opened: Shaped<Opened | null>
     }
   }
 }

@@ -1148,7 +1148,7 @@ test('a diff reads as rows numbered where each line is, its shared indent taken 
   const text = ['@@ -10,4 +10,4 @@ function retry() {', '       const a = 1', '-    return a', '+    return a + 1', '\\ No newline at end of file', '     }'].join('\n')
 
   expect(rowsOf(text)).toEqual([
-    { kind: 'hunk', line: 10, context: 'function retry() {' },
+    { kind: 'hunk', line: 10, old: 10, context: 'function retry() {' },
     { kind: 'same', line: 10, text: '  const a = 1' },
     { kind: 'del', line: 11, text: 'return a' },
     { kind: 'add', line: 11, text: 'return a + 1' },
