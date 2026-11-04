@@ -576,9 +576,18 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {...(press ? { overflow: 'hidden' } : {})}
         >
           {isLive && dot(color, true)}
-          <Text color={color} size="footnote" weight="semibold">
-            {href ? <Link href={href}>{label}</Link> : label}
-          </Text>
+          {/* The desktop opens a Link it draws itself, not one inside a Text: the label goes in it. */}
+          {href ? (
+            <Link key={`link:${href}`} href={href}>
+              <Text color={color} size="footnote" weight="semibold">
+                {label}
+              </Text>
+            </Link>
+          ) : (
+            <Text color={color} size="footnote" weight="semibold">
+              {label}
+            </Text>
+          )}
           {press && pressAnywhere(press.key, press.onPress)}
         </Box>
       ) : press ? (
