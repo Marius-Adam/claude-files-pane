@@ -136,7 +136,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     }
 
     // A press on a closed folder's row opens it in place; on an open one, goes into it: the tree
-    // then shows that folder, with the .. row above leading back. Its caret only opens and closes it.
+    // then shows that folder as its first row, with the way up at its end. Its caret only opens and
+    // closes it.
     const openOrEnter = async (path: string) => (v.expanded.includes(path) ? setView({ dir: path }) : toggle(path))
 
     // A file's actions, behind the ⋯ at the end of its row: open under the row for one file at a
@@ -835,7 +836,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             </Box>,
           )
 
-          if (isOpen && depth < 12) await walk(path, depth + 1)
+          if (isOpen && depth < 13) await walk(path, depth + 1)
         } else {
           const touch = byPath.get(path)
           const isDirty = changed.has(path)
@@ -893,25 +894,32 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       }
     }
 
-    // The way up, the tree's first row: the folder above the one shown, past the project's top too,
-    // by its name.
-    const upRow = (
-      <Box key="row:.." {...rounded()} alignItems="center" gap={1} paddingX={1} paddingY={0} overflow="hidden" hover={{ backgroundColor: HOVER }}>
-        <Box gap={xs} alignItems="center">
-          {chevron()}
-          {icon(folderIcon('..', false), 'up', '▪', MUTED, 16)}
+    // The tree's first row: the folder shown, open, its contents listed under it, as VS Code's
+    // explorer names its root. At its end, the way up to the folder above, past the project's top too.
+    const shown = nameAt(home, v.dir)
+    const rootRow = (
+      <Box key="row:." {...rounded()} justifyContent="space-between" alignItems="center" gap={1} paddingX={1} paddingY={0} overflow="hidden">
+        <Box gap={1} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
+          <Box gap={xs} alignItems="center">
+            {chevron()}
+            {icon(folderIcon(shown, true), shown, '▪', shown.startsWith('.') ? MUTED : FOLDER, 16)}
+          </Box>
+          <Text weight="semibold" wrap="truncate-end">
+            {shown}
+          </Text>
         </Box>
-        <Button key="up" plain dimColor onPress={() => setView({ dir: parentOf(v.dir), expanded: [] })}>
-          {`.. ${nameAt(home, parentOf(v.dir))}`}
-        </Button>
-        {pressAnywhere('up:row', () => setView({ dir: parentOf(v.dir), expanded: [] }))}
+        <Box flexShrink={0}>
+          <Button key="up" plain dimColor onPress={() => setView({ dir: parentOf(v.dir), expanded: [] })}>
+            <Text size="footnote">↑ Up</Text>
+          </Button>
+        </Box>
       </Box>
     )
 
     const query = v.query.trim().toLowerCase()
     const matches = query ? rank(await indexFiles($, home), query, MATCHES) : []
 
-    if (!query) await walk(v.dir, 0)
+    if (!query) await walk(v.dir, 1)
 
     const totals = Object.values(g?.lines ?? {}).reduce<[number, number]>(([a, d], [x, y]) => [a + x, d + y], [0, 0])
     // The pull request found for the branch shown: one found for a branch since left is not its.
@@ -1184,7 +1192,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             ) : v.dir !== '' || v.root !== '' ? (
               <Box gap={xs} alignItems="center" flexShrink={1} minWidth={0}>
                 {tool('home', '⌂ Project', () => setView({ root: '', dir: '', expanded: [] }))}
-                {place(v.dir ? base(v.dir) : project)}
+                {place(nameAt(home, v.dir))}
               </Box>
             ) : (
               place(project)
@@ -1224,7 +1232,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 changed.has(path),
               ),
             )}
-            {!query && upRow}
+            {!query && rootRow}
             {rows}
             {rows.length >= TREE_ROWS && (
               <Box paddingX={1} overflow="hidden">

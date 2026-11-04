@@ -106,9 +106,15 @@ const reading = async (ui: { findAll: (q: { type: string }) => Promise<unknown> 
     .filter(Boolean)
     .join(' ')
 
-// What the .. row says: the folder it leads up to.
-const upLabel = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) =>
-  ((await ui.findAll({ type: 'Button' })) as { props: { key?: string; label?: string } }[]).find(one => one.props.key === 'up')?.props.label
+// The tree's first row, as a person reads it: the folder shown, and the way up at its end.
+const rootRow = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) => {
+  type Node = { type: string; key?: string; children?: (Node | string)[] }
+  const texts = (from: Node): string[] =>
+    from.type === 'Text' ? [(from.children ?? []).join('').trim()] : (from.children ?? []).flatMap(child => (typeof child === 'string' ? [] : texts(child)))
+  const row = ((await ui.findAll({ type: 'Box' })) as Node[]).find(one => one.key === 'row:.')
+
+  return row ? texts(row).filter(Boolean).join(' ') : undefined
+}
 
 // The folders' chevrons on a surface that paints, as each one's alt names it: `open` or `closed`.
 const chevrons = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) =>
@@ -263,8 +269,7 @@ test('a file keeps the chevron space only beside a folder', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   const blanks = async () => ((await ui.findAll({ type: 'Svg' })) as unknown as { props: { alt: string } }[]).filter(one => one.props.alt === 'file')
 
-  // README.md and .env sit beside src/ and tests/, as the .. row above them does; client.js has
-  // no folder beside it in src/.
+  // README.md and .env sit beside src/ and tests/; client.js has no folder beside it in src/.
   await ui.press({ key: 'dir:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
   expect(await blanks()).toHaveLength(3)
@@ -474,12 +479,13 @@ test('an edit outside the folder the tree shows takes it back to the top, opened
   engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
 
-  // The .. row from the project's top shows its parent, with the way home in the header; Claude
+  // The way up from the project's top shows its parent, with the way home in the header; Claude
   // then edits a file in src/.
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await text(ui, /⌂ Project/)).toBeUndefined()
   await ui.press({ key: 'up' })
   expect(await text(ui, /⌂ Project/)).toMatch(/Project/)
+  expect(await rootRow(ui)).toBe('/ ↑ Up')
   await $.tool.call({ tool: 'Edit', file_path: '/proj/src/client.js', old_string: 'a', new_string: 'b' })
 
   expect(await text(ui, /^ ?proj ?$/)).toMatch(/proj/)
@@ -564,13 +570,13 @@ test('a press anywhere on a folder row opens it, and a press on it open goes int
 
   await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
-  expect(await upLabel(ui)).toBe('.. /')
+  expect(await rootRow(ui)).toBe('proj ↑ Up')
 
-  // In src/, the .. row names the folder it leads back to, and src/ is shut there again.
+  // In src/, the first row names src, the folder shown, and src/ is shut there again.
   await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
   expect(await text(ui, /^README\.md$/)).toBeUndefined()
-  expect(await upLabel(ui)).toBe('.. proj')
+  expect(await rootRow(ui)).toBe('src ↑ Up')
   await ui.press({ key: 'up' })
   expect(await text(ui, /^README\.md$/)).toBe('README.md')
   expect(await text(ui, /^client\.js$/)).toBeUndefined()
@@ -588,7 +594,7 @@ test('VS Code lays nothing over a row: a folder opens from its caret, and its na
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { props: { position?: string } }[]
   expect(boxes.filter(one => one.props.position === 'absolute')).toEqual([])
   const keys = ((await ui.findAll({ type: 'Button' })) as unknown as { props: { key?: string } }[]).map(one => one.props.key ?? '')
-  expect(keys.filter(key => /^(fold|dir|away):/.test(key) || key === 'up:row')).toEqual([])
+  expect(keys.filter(key => /^(fold|dir|away):/.test(key))).toEqual([])
   expect(await text(ui, /^src$/)).toBe('src')
 
   await ui.press({ key: 'caret:src' })
@@ -987,7 +993,7 @@ test('a diff reads as rows numbered where each line is, its shared indent taken 
   ])
 })
 
-test('the .. row names the folder it leads to, above the project and on Windows too', () => {
+test('the first row names the folder shown, above the project and on Windows too', () => {
   expect(nameAt('/work/proj', '')).toBe('proj')
   expect(nameAt('/work/proj', 'src/api')).toBe('api')
   expect(nameAt('/work/proj', '..')).toBe('work')
