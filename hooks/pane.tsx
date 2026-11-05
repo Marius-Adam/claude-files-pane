@@ -522,6 +522,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // It comes first in the row, and the ⋯ floats over it (`moreOver`): the ⋯ stays its own.
     // On the terminal the name is the Button. VS Code, which does neither, opens it from the ⋯.
     const openLayer = (where: Menu['where'], abs: string) => (canLayer ? pressAnywhere(`open-row:${where}:${abs}`, () => openFile($, abs)) : null)
+    // A row pressed anywhere lights under the pointer, its own tint a step stronger. The surface
+    // keeps a keyed Box's `hover` lit under a resting pointer across a redraw, which a Button's own
+    // light under the pointer is not: while Claude streams, the pane redraws every second or so.
+    const lit = (accent?: string) => (canLayer ? { hover: { backgroundColor: accent ? tint(accent, '3d') : HOVER } } : {})
     const opens = (where: Menu['where'], abs: string, name: JSX.Element) =>
       isRich ? (
         name
@@ -806,6 +810,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Box
               key={`row:${path}`}
               {...rounded()}
+              {...lit()}
               justifyContent="space-between"
               alignItems="center"
               gap={1}
@@ -870,6 +875,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               paddingRight={0}
               paddingY={0}
               backgroundColor={background}
+              {...lit(touch && accentOf(touch))}
               overflow="hidden"
             >
               {touch?.isActive && shimmer(accentOf(touch))}
@@ -1158,6 +1164,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 key={`touch:${one.path}`}
                 {...rounded(one.isActive ? tint(accentOf(one), '59') : CLEAR)}
                 backgroundColor={background}
+                {...lit(accentOf(one))}
                 justifyContent="space-between"
                 alignItems="center"
                 gap={1}
