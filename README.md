@@ -50,7 +50,7 @@
 
 - **Live card**: Claude's thinking, the command it runs, the file it reads or edits
 - **Tree that follows Claude**: opens to each file it edits, even in another project
-- **Touched list**: files read or edited this turn or session, with lines added and removed
+- **Touched list**: files read or edited this turn or session, with lines added and removed, including files changed by a command Claude runs
 - **Git**: branch, commits ahead and behind, its pull request with its checks and review, the worktree you're in, a rebase or merge in progress with its conflicts, changed files, ignored files dimmed
 - **Search** with VS Code's icons, best matches first
 - Works in the desktop app, VS Code and the terminal
@@ -102,6 +102,7 @@ claude plugin uninstall files-pane@marius-adam
 - **N changed** shows only the files git reports changed, in their folders; press it again for the whole tree.
 - Colours tell you what happened to a file: read **purple**, edited **orange**, uncommitted **yellow**, committed **green**.
 - A press on a file opens it in a pane of its own, beside the Files pane, with three tabs: **File**, its text with its lines numbered (a Markdown file as its preview, a press from its source), **Diff**, what changed since the last commit, and **History**, the commits that changed it, each a press from what it changed. In VS Code, open it from its **⋯**.
+- A file a command changes (a `sed`, a script, a formatter) counts as edited by Claude, as an Edit does, in a git repository. Not counted: files a command rewrites by moving HEAD, stashing, or starting or ending a merge or rebase, since git brought those in. Counted: a file a command puts back as it was committed (`git restore`), as Claude changed it. Counted by mistake: a file you save while one of Claude's commands is running, since the pane can't tell who wrote it.
 - What changes without Claude, such as a file you make in your editor or a branch you check out in a terminal, shows within a few seconds while the pane is in sight.
 - A file's **⋯** menu can open it, `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor, Finder or Explorer.
 
@@ -168,7 +169,7 @@ Pull requests go to `staging`. A release is one pull request from `staging` to `
 | `hooks/register.tsx` | The mod's hooks: what Claude does reaches the pane through these |
 | `hooks/pane.tsx` | The pane's drawing: the card, git's line, search, the toolbar, the touched list and the tree |
 | `hooks/file.tsx` | The file pane: a file opened from the tree, with its File, Diff and History tabs |
-| `hooks/activity.ts` | Following Claude: the card's timing, commits, diffs |
+| `hooks/activity.ts` | Following Claude: the card's timing, commits, diffs, the files a command changes |
 | `hooks/disk.ts` | Git, the branch's pull request, folder listings, the search index, a file's text, diff and history |
 | `hooks/paths.ts` | Paths and sizes as the pane prints them, and search ranking |
 | `hooks/look.ts` | Colours, type chips and SVGs |

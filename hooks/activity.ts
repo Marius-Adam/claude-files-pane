@@ -2,7 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { Now, Touch } from '../types'
-import { diffOf, forget, gitPath, headOf, redraw, refreshGit, run } from './disk'
+import { diffOf, forget, gitPath, headOf, redraw, refreshGit, run, snapshotOf } from './disk'
+import type { Snapshot } from './disk'
 import { clip, closedAbove, dirOf, firstLine, fromShell, isAbs, isUnder, join, rel, slashed } from './paths'
 import { DEFAULT_VIEW, PANE } from './state'
 
@@ -100,12 +101,36 @@ export const changesPr = (e: { tool: string }) => {
   return e.tool === 'Bash' && typeof command === 'string' && PR_CHANGE.test(command)
 }
 
-export const upsert = (list: Touch[], path: string, isEdit: boolean): Touch[] => {
+export const upsert = (list: Touch[], path: string, isEdit: boolean, isActive = true): Touch[] => {
   const old = list.find(one => one.path === path)
-  const touch: Touch = { path, isEdited: isEdit || Boolean(old?.isEdited), isActive: true, isCommitted: false, at: old?.at ?? Date.now() }
+  const touch: Touch = { path, isEdited: isEdit || Boolean(old?.isEdited), isActive, isCommitted: false, at: old?.at ?? Date.now() }
 
   // A file keeps its place in the list: files stay in the order Claude first touched them.
   return old ? list.map(one => (one.path === path ? touch : one)) : [...list, touch].slice(-100)
+}
+
+// The files a command changed, from the repository as it stood before the command and after: each
+// whose state differs (unchanged, or changed with this size and time on the disk). A command that
+// moved HEAD, stashed, or began or ended a merge, a rebase or the like rewrote files git brought,
+// not ones Claude wrote, so it counts none. Nor does one git did not answer around.
+export const changedBy = (before: Snapshot | null, after: Snapshot | null): string[] => {
+  if (!before || !after || before.git !== after.git) return []
+
+  const paths = new Set([...before.files.keys(), ...after.files.keys()])
+
+  return [...paths].filter(path => before.files.get(path) !== after.files.get(path))
+}
+
+// After a command Claude ran: the files it changed (paths from the session's folder, as the list
+// spells them) join the touched list as edited, as a file the Edit tool changes does, and an open
+// diff is read again.
+export async function afterCommand($: EngineInterface, before: Snapshot): Promise<void> {
+  const paths = changedBy(before, await snapshotOf($))
+
+  if (paths.length === 0) return
+
+  await update($, touched, list => paths.reduce((all, path) => upsert(all, path, true, false), list))
+  await refreshDiff($)
 }
 
 // A finished turn's files join the earlier turns', for the whole-session list: a file touched again
