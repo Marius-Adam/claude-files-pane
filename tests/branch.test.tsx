@@ -148,18 +148,49 @@ test('in a linked worktree, the branch row says whose worktree it is and links t
   }
 })
 
-test('on the desktop the pull request’s pill is a link holding its label, which the app opens', async ($, on) => {
-  engine(on, { branch: 'fix/retry', isWorktree: false, gh: { number: 42, state: 'OPEN', isDraft: false } })
+type Node = { type: string; props: Record<string, unknown>; children?: (Node | string)[] }
+
+// Every Text under a node, as [its text, its props], in order.
+const textsUnder = (node: Node): [string, Record<string, unknown>][] =>
+  (node.children ?? []).flatMap(child =>
+    typeof child === 'string'
+      ? []
+      : child.type === 'Text'
+        ? [[(child.children ?? []).filter(one => typeof one === 'string').join(''), child.props] as [string, Record<string, unknown>]]
+        : textsUnder(child),
+  )
+
+// The app opens a Link it draws itself; one drawn inside a Text it draws as text only. It draws
+// that Link a line of its own type tall, so a pill holding one stood taller than the pills beside it.
+test('on the desktop the pull request’s pill is drawn as every pill is, a link the app opens laid over it', async ($, on) => {
+  engine(on, { branch: 'fix/retry', isWorktree: true, gh: { number: 42, state: 'OPEN', isDraft: false } })
 
   const ui = await mounted($, 'desktop')
-  type Node = { type: string; props: { href?: string }; children?: (Node | string)[] }
+  const pills = ((await ui.findAll({ type: 'Box' })) as Node[]).filter(one => /^#?[0-9a-f]{6}4d$/i.test(String(one.props.borderColor ?? '')) && one.props.paddingX === 1)
+  const pr = pills.find(one => textsUnder(one).some(([label]) => label === '#42 open'))!
+  const worktree = pills.find(one => textsUnder(one).some(([label]) => label === 'worktree of shop'))!
   const [link] = (await ui.findAll({ type: 'Link' })) as Node[]
-  const label = (node: Node): string => (node.children ?? []).map(child => (typeof child === 'string' ? child : label(child))).join('')
+  const labelOf = (pill: Node) => (pill.children ?? []).find((child): child is Node => typeof child !== 'string' && child.type === 'Text')
 
-  // The app opens a Link it draws itself; one drawn inside a Text it draws as text only.
   expect(link?.props.href).toBe('https://github.com/someone/shop/pull/42')
-  expect(link?.children?.map(child => (typeof child === 'string' ? 'string' : child.type))).toEqual(['Text'])
-  expect(label(link!).trim()).toBe('#42 open')
+  // The label is the pill's own Text, as the worktree's is, with nothing around it to make it taller.
+  expect(labelOf(pr)?.props.size).toBe(labelOf(worktree)?.props.size)
+  expect(labelOf(pr)?.children).toEqual(['#42 open'])
+  // The Link lies over the pill, out of its flow and clipped by it, so a press anywhere on it opens.
+  const layer = (pr.children ?? []).find((child): child is Node => typeof child !== 'string' && child.props.position === 'absolute')
+  expect(layer?.children?.map(child => (typeof child === 'string' ? child : child.type))).toEqual(['Link'])
+  expect(pr.props.overflow).toBe('hidden')
+  await ui.unmount()
+})
+
+test('in VS Code, which lays nothing over a pill, the pull request’s link holds its label', async ($, on) => {
+  engine(on, { branch: 'fix/retry', isWorktree: false, gh: { number: 42, state: 'OPEN', isDraft: false } })
+
+  const ui = await mounted($, 'vscode')
+  const [link] = (await ui.findAll({ type: 'Link' })) as Node[]
+
+  expect(link?.props.href).toBe('https://github.com/someone/shop/pull/42')
+  expect(textsUnder(link!).map(([label]) => label.trim())).toEqual(['#42 open'])
   await ui.unmount()
 })
 

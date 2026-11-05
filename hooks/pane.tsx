@@ -563,11 +563,14 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           gap={xs}
           alignItems="center"
           flexShrink={0}
-          {...(press ? { overflow: 'hidden' } : {})}
+          {...(press || (href && canLayer) ? { overflow: 'hidden' } : {})}
         >
           {isLive && dot(color, true)}
-          {/* The desktop opens a Link it draws itself, not one inside a Text: the label goes in it. */}
-          {href ? (
+          {/* The desktop opens a Link it draws itself, not one inside a Text, and draws it a line of
+              its own type tall, taller than a pill's label. So where a layer can lie over the pill,
+              the label is drawn as every pill's is and the Link lies over it, pressed anywhere;
+              elsewhere the Link holds the label. */}
+          {href && !canLayer ? (
             <Link key={`link:${href}`} href={href}>
               <Text color={color} size="footnote" weight="semibold">
                 {label}
@@ -577,6 +580,13 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Text color={color} size="footnote" weight="semibold">
               {label}
             </Text>
+          )}
+          {href && canLayer && (
+            <Box position="absolute" top={0} left={0} right={0} bottom={0} overflow="hidden">
+              <Link key={`link:${href}`} href={href}>
+                <Text color={CLEAR}>{' '.repeat(label.length + 8)}</Text>
+              </Link>
+            </Box>
           )}
           {press && pressAnywhere(press.key, press.onPress)}
         </Box>
