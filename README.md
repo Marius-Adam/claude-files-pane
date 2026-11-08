@@ -21,6 +21,8 @@
     <br />
     <a href="#about-the-project">View Demo</a>
     &middot;
+    <a href="CHANGELOG.md">What's New</a>
+    &middot;
     <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?template=bug_report.yml">Report Bug</a>
     &middot;
     <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?template=feature_request.yml">Request Feature</a>
@@ -46,14 +48,48 @@
 
 ## About The Project
 
-<img src="docs/demo.gif" alt="The Files pane in the Claude desktop app, recorded as Claude fixes a bug in this repository: the files it reads turn purple in the touched list, the two it edits turn orange with their line counts, the card shows the test run, and a file's ⋯ menu offers Copy, Open in an editor and its diff, drawn as numbered rows" width="880">
+<img src="docs/demo.gif" alt="The Files pane in the Claude desktop app as Claude fixes a discount bug: the files it reads turn purple, its edit and a sed that renames a function turn five files orange, and after it pushes and opens a pull request the branch row shows the PR with its checks running, then passing. A file opened beside the pane shows a Markdown preview, then the commit that changed it, and a line added from a terminal marks the file changed within seconds" width="880">
+
+### New in 1.0
+
+- **Open any file** beside the chat, with its text, its diff and every commit that changed it
+- **Your pull request** in the branch row, with its checks and review
+- **Your own changes**, made in an editor or a terminal, show within seconds
+- **A `sed`, a script or a formatter** Claude runs counts as an edit
+
+Everything that changed is in the [changelog](CHANGELOG.md).
+
+### Features
+
+**Follow Claude**
 
 - **Live card**: Claude's thinking, the command it runs, the file it reads or edits
 - **Tree that follows Claude**: opens to each file it edits, even in another project
 - **Touched list**: files read or edited this turn or session, with lines added and removed, including files changed by a command Claude runs
-- **Git**: branch, commits ahead and behind, its pull request with its checks and review, the worktree you're in, a rebase or merge in progress with its conflicts, changed files, ignored files dimmed
+
+**Open a file**
+
+- **File**: its text with line numbers, or a Markdown file as its preview
+- **Diff**: what changed since the last commit
+- **History**: the commits that changed it, each a press from what it changed
+
+**Git at a glance**
+
+- Branch, commits ahead and behind, and its upstream
+- The branch's pull request with its checks and review
+- The worktree you're in, and a rebase or merge in progress with its conflicts
+- Changed files, with ignored files dimmed
+
+**Find and act**
+
 - **Search** with VS Code's icons, best matches first
-- Works in the desktop app, VS Code and the terminal
+- A file's **⋯** menu: `@`-mention it, copy its path, see its diff, or open it in your editor, Finder or Explorer
+
+### Works everywhere
+
+| Desktop app | VS Code | Terminal |
+| :-: | :-: | :-: |
+| <img src="docs/desktop.png" alt="The Files pane beside the chat in the Claude desktop app, with a file open on its History tab" width="280"> | <img src="docs/vscode.png" alt="The Files pane in the Claude Code extension for VS Code, with a file's ⋯ menu open" width="280"> | <img src="docs/terminal.png" alt="The Files pane drawn in the terminal beside a claude session" width="280"> |
 
 ### Built With
 
