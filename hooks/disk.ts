@@ -447,7 +447,7 @@ function checksOf(rollup: unknown): Pr['checks'] {
 
 async function prOf($: EngineInterface, root: string, branch: string): Promise<Pr | null> {
   const out = await $.process
-    .run(['gh', 'pr', 'view', '--json', 'number,url,state,isDraft,reviewDecision,statusCheckRollup'], {
+    .run(['gh', 'pr', 'view', '--json', 'number,url,state,isDraft,reviewDecision,statusCheckRollup,headRefOid'], {
       timeoutMs: 10000,
       env: { GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' },
       ...(root ? { cwd: root } : {}),
@@ -456,12 +456,16 @@ async function prOf($: EngineInterface, root: string, branch: string): Promise<P
 
   if (!out || out.exitCode !== 0) return null
 
+  let found: Pr
+  let head: unknown
+
   try {
-    const { number, url, state, isDraft, reviewDecision, statusCheckRollup } = JSON.parse(out.stdout) as Record<string, unknown>
+    const { number, url, state, isDraft, reviewDecision, statusCheckRollup, headRefOid } = JSON.parse(out.stdout) as Record<string, unknown>
 
     if (typeof number !== 'number' || typeof url !== 'string' || typeof state !== 'string' || !PR_STATES[state]) return null
 
-    return {
+    head = headRefOid
+    found = {
       branch,
       number,
       url,
@@ -472,6 +476,19 @@ async function prOf($: EngineInterface, root: string, branch: string): Promise<P
   } catch {
     return null
   }
+
+  // GitHub names the latest pull request a branch was ever the head of, so a long-lived branch
+  // (staging, develop) keeps naming the one merged from it weeks ago. A merged or closed one is the
+  // branch's only while the branch has gone no further than that pull request's last commit: once
+  // HEAD holds a commit it never had, it is gone. A commit git does not have here (exit 128) counts
+  // as not gone, as HEAD is then behind it, not past it.
+  if ((found.state === 'merged' || found.state === 'closed') && typeof head === 'string' && /^[0-9a-f]{40,64}$/.test(head)) {
+    const past = await run($, ['git', 'merge-base', '--is-ancestor', 'HEAD', head], 3000, root || undefined)
+
+    if (past?.exitCode === 1) return null
+  }
+
+  return found
 }
 
 // Reads git again for the project shown, and asks for the branch's pull request when lookUpPr

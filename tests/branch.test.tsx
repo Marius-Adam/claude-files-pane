@@ -24,11 +24,17 @@ const entry = (name: string, kind: 'file' | 'dir') => ({ name, kind, size: 0, mt
 const asked = (path: string) => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
 
 // What the GitHub CLI answers `gh pr view --json number,url,state,isDraft,reviewDecision,
-// statusCheckRollup`: a pull request as it prints one (copied from a real run; `checks` are its
-// rollup's entries, `review` its reviewDecision), `none` as it exits when the branch has none (or the
-// CLI is signed out), `missing` when there is no `gh` on the PATH to start, or `slow` while GitHub
-// has not answered yet.
+// statusCheckRollup,headRefOid`: a pull request as it prints one (copied from a real run; `checks`
+// are its rollup's entries, `review` its reviewDecision), `none` as it exits when the branch has none
+// (or the CLI is signed out), `missing` when there is no `gh` on the PATH to start, or `slow` while
+// GitHub has not answered yet.
 type PullRequest = { number: number; state: 'OPEN' | 'MERGED' | 'CLOSED'; isDraft: boolean; review?: string; checks?: object[] }
+
+// The pull request's last commit, and how `git merge-base --is-ancestor HEAD <it>` exits: 0 while
+// HEAD has gone no further, 1 once HEAD holds a commit the pull request never had, 128 when git does
+// not have that commit here.
+const PR_HEAD = '6de4aa2c0e1b9f3d7a5c4b2e8f6d0a1c3e5b7d9f'
+type Past = 0 | 1 | 128
 type Gh = PullRequest | 'none' | 'missing' | 'slow'
 
 // A job of the repository's Check workflow as the rollup lists it, run from `startedAt`.
@@ -48,7 +54,7 @@ const job = (name: string, status: string, conclusion: string, startedAt = '2026
 // git keeps in the worktree's git directory while a rebase or merge is in progress, by path. Any of
 // it may change mid-test, as when Claude opens a pull request. `ran` collects every command, and
 // `waits` every timer the pane set, which a test lets end with `end()`.
-type World = { branch: string; isWorktree: boolean; gh: Gh; track?: string; status?: string[]; gitDir?: Record<string, string> }
+type World = { branch: string; isWorktree: boolean; gh: Gh; track?: string; status?: string[]; gitDir?: Record<string, string>; past?: Past }
 
 const engine = (on: Parameters<TestBody>[1], world: World, ran: string[][] = []) => {
   const waits: { ms: number; end: () => void }[] = []
@@ -90,11 +96,12 @@ const engine = (on: Parameters<TestBody>[1], world: World, ran: string[][] = [])
       if (gh === 'slow') return new Promise<never>(() => {})
 
       const url = `https://github.com/someone/shop/pull/${gh.number}`
-      const printed = { isDraft: gh.isDraft, number: gh.number, reviewDecision: gh.review ?? '', state: gh.state, statusCheckRollup: gh.checks ?? [], url }
+      const printed = { headRefOid: PR_HEAD, isDraft: gh.isDraft, number: gh.number, reviewDecision: gh.review ?? '', state: gh.state, statusCheckRollup: gh.checks ?? [], url }
 
       return answer(0, `${JSON.stringify(printed)}\n`)
     }
 
+    if (argv.includes('merge-base')) return answer(world.past ?? 0)
     if (argv.includes('--path-format=absolute')) return answer(0, `${gitDir()}\n${world.isWorktree ? '/src/shop/.git' : '/proj/.git'}\n`)
     if (argv.includes('--absolute-git-dir')) return answer(0, `${gitDir()}\n`)
     if (argv.includes('--abbrev-ref')) return answer(0, `${world.branch}\n\n`)
@@ -206,6 +213,47 @@ test('a draft pull request says so, and a merged one says merged', async ($, on)
   await ui.press({ key: 'refresh' })
   await settled()
   expect(await text(ui, /#7 merged/)).toMatch(/#7 merged/)
+  await ui.unmount()
+})
+
+// A long-lived branch such as staging stays the head of every release pull request merged from it,
+// and GitHub keeps naming the latest one long after the branch moved on.
+test('a merged or closed pull request the branch has moved past is not shown; one it has not, or whose last commit git lacks, is', async ($, on) => {
+  const ran: string[][] = []
+  const world: World = { branch: 'staging', isWorktree: false, gh: { number: 39, state: 'MERGED', isDraft: false }, past: 1 }
+  engine(on, world, ran)
+
+  const ui = await mounted($)
+
+  expect(await text(ui, /^staging$/)).toBe('staging')
+  expect(await text(ui, /^#\d+/)).toBeUndefined()
+  expect(await hrefs(ui)).toEqual([])
+  expect(ran.some(argv => argv.join(' ').endsWith(`merge-base --is-ancestor HEAD ${PR_HEAD}`))).toBe(true)
+
+  world.gh = { number: 39, state: 'CLOSED', isDraft: false }
+  await ui.press({ key: 'refresh' })
+  await settled()
+  expect(await text(ui, /^#\d+/)).toBeUndefined()
+
+  for (const past of [0, 128] as const) {
+    world.past = past
+    world.gh = { number: 39, state: 'MERGED', isDraft: false }
+    await ui.press({ key: 'refresh' })
+    await settled()
+    expect(await text(ui, /#39 merged/)).toMatch(/#39 merged/)
+  }
+  await ui.unmount()
+})
+
+test('an open pull request shows whatever HEAD holds, and git is not asked', async ($, on) => {
+  const ran: string[][] = []
+  const world: World = { branch: 'feat/search', isWorktree: false, gh: { number: 8, state: 'OPEN', isDraft: false }, past: 1 }
+  engine(on, world, ran)
+
+  const ui = await mounted($)
+
+  expect(await text(ui, /#8 open/)).toMatch(/#8 open/)
+  expect(ran.some(argv => argv.includes('merge-base'))).toBe(false)
   await ui.unmount()
 })
 
