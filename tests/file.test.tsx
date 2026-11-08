@@ -174,6 +174,34 @@ test('Diff shows what changed since the last commit; History the commits that ch
   await files.unmount()
 })
 
+test('on the desktop a press anywhere on a commit opens it: a one-line Button for each of its lines', async ($, on) => {
+  mock.clock(on)
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await files.press({ key: 'fold:src' })
+  await files.press({ key: `open-row:tree:${CLIENT}` })
+
+  const file = await $.ui.mount({ ...FILE_PANE, surface: 'desktop' })
+  await file.press({ key: 'tab:history' })
+
+  // The desktop draws a Button's text on one line: one Button of three lines took a press on the
+  // row's top line alone, so each line gets its own.
+  type Node = { props?: { key?: string; text?: string }; children?: unknown[] }
+  const texts = (one: unknown): string[] =>
+    typeof one === 'string' ? [one] : [(one as Node).props?.text ?? '', ...((one as Node).children ?? []).flatMap(texts)]
+  const layer = ((await file.findAll({ type: 'Button' })) as unknown as Node[]).filter(one => /^commit:a1c9e42/.test(one.props?.key ?? ''))
+
+  expect(layer.map(one => one.props?.key)).toEqual(['commit:a1c9e42', 'commit:a1c9e42:2', 'commit:a1c9e42:3'])
+  expect(layer.every(one => !texts(one).join('').includes('\n'))).toBe(true)
+
+  await file.press({ key: 'commit:a1c9e42:3' })
+  expect(await reading(file)).toMatch(/Retry three times .* − export const retry = 1 1 \+ export const retry = 3 Commits on/)
+  await file.unmount()
+  await files.unmount()
+})
+
 test('a commit’s change is read from the path the file had then, from the repository’s top', async ($, on) => {
   mock.clock(on)
   const { ran } = engine(on)
