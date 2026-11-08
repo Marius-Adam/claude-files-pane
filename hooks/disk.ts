@@ -220,7 +220,9 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
 
   const { branch, prefix, isDetached } = where
   const [state, numstat, track, dirs, ignored] = await Promise.all([
-    run($, ['git', 'status', '--porcelain', '-z', '-uall'], 10000, at),
+    // A folder git tracks nothing in comes once, as `out/`, as `git status` prints it: a folder of
+    // thousands of generated files is one change, and git need not list them all.
+    run($, ['git', 'status', '--porcelain', '-z', '--untracked-files=normal'], 10000, at),
     run($, ['git', 'diff', '--numstat', '-z', '--relative', 'HEAD'], 10000, at),
     isDetached ? null : run($, ['git', 'for-each-ref', '--format=%(upstream)%00%(upstream:track,nobracket)', `refs/heads/${branch}`], 5000, at),
     run($, ['git', 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], 5000, at),
@@ -276,6 +278,72 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
   }
 }
 
+// What a command may change, as it stood, to compare after it with before: `git` is where git
+// stood (the commit HEAD names, the newest stash, what git is in the middle of), and
+// `files` each file git reports as changed under the session's folder, by its path from there,
+// with its size and time on the disk, or `gone`. A file git reports as unchanged is in neither.
+export type Snapshot = { git: string; files: Map<string, string> }
+
+// Past this many changed files a command is not looked at: each would be one more read of the disk.
+const SNAPSHOT_FILES = 1000
+
+// The paths in `git status --porcelain=v2 -z` entries, from the repository's top: a changed file's
+// (`1`), a renamed one's (`2`, its old path in the next field, skipped), a conflicted one's (`u`)
+// and an untracked one's (`?`), each after its fixed run of fields. The `#` headers go to `heads`.
+function pathsOfV2(fields: string[], heads: string[]) {
+  const paths: string[] = []
+  const SKIP: Record<string, number> = { '1': 8, '2': 9, u: 10, '?': 1 }
+
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i]!
+    const skip = SKIP[field[0] ?? '']
+
+    if (field.startsWith('# ')) heads.push(field)
+    else if (skip !== undefined && field[1] === ' ') paths.push(field.split(' ').slice(skip).join(' '))
+    if (field.startsWith('2 ')) i++
+  }
+
+  return paths
+}
+
+// The session's repository as a command may leave it (Snapshot), read in the session's folder
+// only. Null where git did not answer in time, or reports more than SNAPSHOT_FILES changed: the
+// command is then not looked at. Bounded to a few seconds, as it stands before Claude's command.
+export async function snapshotOf($: EngineInterface): Promise<Snapshot | null> {
+  const cwd = await sessionDir($)
+  const [state, dirs, stash] = await Promise.all([
+    // Every file, in an untracked folder too, so a file a command writes there counts: past
+    // SNAPSHOT_FILES the command is not looked at.
+    run($, ['git', 'status', '--porcelain=v2', '--branch', '-z', '-uall'], 3000),
+    // The session's folder within the repository (`sub/`, or nothing at its top), as readGit takes
+    // it: a folder reached through a link has another spelling than the top git names.
+    run($, ['git', 'rev-parse', '--absolute-git-dir', '--show-prefix'], 3000),
+    // The newest stash's commit, or nothing: a stash or a pop moves it, on any git.
+    run($, ['git', 'for-each-ref', '--format=%(objectname)', 'refs/stash'], 3000),
+  ])
+
+  if (!cwd || !state || state.exitCode !== 0 || !dirs || dirs.exitCode !== 0 || !stash || stash.exitCode !== 0) return null
+
+  const [gitDir = '', prefix = ''] = dirs.stdout.split('\n').map(line => line.trim())
+  const heads: string[] = []
+  const paths = pathsOfV2(fieldsOf(state.stdout), heads).flatMap(path => (path.startsWith(prefix) ? [path.slice(prefix.length)] : []))
+
+  if (paths.length > SNAPSHOT_FILES) return null
+
+  const op = await opOf($, slashed(gitDir))
+  const stamps = await Promise.all(
+    paths.map(path =>
+      $.fs.stat(join(cwd, path)).then(
+        stat => `${stat.size}\0${stat.mtimeMs}`,
+        () => 'gone',
+      ),
+    ),
+  )
+  const where = [...heads.filter(head => head.startsWith('# branch.oid ')), stash.stdout.trim(), op ? `${op.verb} ${op.step?.join('/') ?? ''}` : '']
+
+  return { git: where.join('\0'), files: new Map(paths.map((path, i) => [path, stamps[i]!])) }
+}
+
 // Git's state in two commands, for comparing, not reading: the branch, its commit and how far it
 // is from its upstream, each changed file's state, and the lines changed in each. Null where git
 // may not run or did not answer.
@@ -284,7 +352,7 @@ async function printOf($: EngineInterface, root: string): Promise<string | null>
 
   const at = root || undefined
   const [state, numstat] = await Promise.all([
-    run($, ['git', 'status', '--porcelain=v2', '--branch', '-z', '-uall'], 10000, at),
+    run($, ['git', 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal'], 10000, at),
     run($, ['git', 'diff', '--numstat', '-z', 'HEAD'], 10000, at),
   ])
 

@@ -3,6 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import {
   absOf,
+  afterCommand,
   afterCommit,
   changesPr,
   commitDir,
@@ -18,7 +19,7 @@ import {
   touchOf,
   upsert,
 } from './activity'
-import { forget, headOf, lookForChanges, redraw, refreshGit, sessionDir } from './disk'
+import { forget, headOf, lookForChanges, redraw, refreshGit, sessionDir, snapshotOf } from './disk'
 import { hostOf } from './editors'
 import { renderFile } from './file'
 import { renderPane } from './pane'
@@ -96,10 +97,13 @@ export const register: Register = on => {
 
     if (!hit) {
       const id = await startWork($, { verb: 'working', tool: e.tool, ...describe(e, cwd) }).catch(() => 0)
+      // Where the repository stood before a command, so the files it changes count as Claude's.
+      const before = e.tool === 'Bash' ? await snapshotOf($).catch(() => null) : null
 
       try {
         return await next(e)
       } finally {
+        if (before) await afterCommand($, before).catch(() => {})
         await endWork($, id).catch(() => {})
         // A command may have made, moved or removed files: the tree lists its folders again, and
         // git, which only a command can change, is read again, with the pull request when the
