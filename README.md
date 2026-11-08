@@ -173,7 +173,7 @@ Pull requests go to `staging`. A release is one pull request from `staging` to `
 | `hooks/disk.ts` | Git, the branch's pull request, folder listings, the search index, a file's text, diff and history |
 | `hooks/paths.ts` | Paths and sizes as the pane prints them, and search ranking |
 | `hooks/look.ts` | Colours, type chips and SVGs |
-| `hooks/icons.ts`, `icon-svgs.ts` | Which vscode-icons icon a file or folder gets, and the SVGs (generated) |
+| `hooks/icons.ts`, `icon-svgs*.ts` | Which vscode-icons icon a file or folder gets, and the SVGs (generated, in two files to stay under the plugin directory's 256 KiB limit) |
 | `tests/` | Tests, against the terminal and desktop surfaces |
 
 To add an icon, map a name, extension or folder in `hooks/icons.ts` to a [vscode-icons](https://icon-sets.iconify.design/vscode-icons/) id, then:
