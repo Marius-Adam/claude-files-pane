@@ -48,7 +48,7 @@
 
 ## About The Project
 
-<img src="docs/demo.gif" alt="The Files pane in the Claude desktop app as Claude fixes a discount bug: the files it reads turn purple, its edit and a sed that renames a function turn five files orange, and after it pushes and opens a pull request the branch row shows the PR with its checks running, then passing. A file opened beside the pane shows a Markdown preview, then the commit that changed it, and a line added from a terminal marks the file changed within seconds" width="880">
+<img src="docs/demo.gif" alt="The Files pane in the Claude desktop app as Claude fixes a discount bug: its edit and a sed that renames a function turn five files orange, then green once committed; after it pushes and opens a pull request, the branch row shows the PR with its checks running, then passing. A Markdown file opens as a preview beside the pane, a commit in a file's History shows what it changed, and a line added from a terminal marks the file changed within seconds, its Diff a press away" width="880">
 
 ### New in 1.0
 
@@ -87,9 +87,11 @@ Everything that changed is in the [changelog](CHANGELOG.md).
 
 ### Works everywhere
 
-| Desktop app | VS Code | Terminal |
-| :-: | :-: | :-: |
-| <img src="docs/desktop.png" alt="The Files pane beside the chat in the Claude desktop app, with a file open on its History tab" width="280"> | <img src="docs/vscode.png" alt="The Files pane in the Claude Code extension for VS Code, with a file's ⋯ menu open" width="280"> | <img src="docs/terminal.png" alt="The Files pane drawn in the terminal beside a claude session" width="280"> |
+| Desktop app | Terminal |
+| :-: | :-: |
+| <img src="docs/desktop.png" alt="The Files pane beside the chat in the Claude desktop app: the branch's pull request with its checks running, and the five files Claude edited, committed" width="430"> | <img src="docs/terminal.png" alt="The Files pane drawn beside a claude session in the terminal, with the three files Claude read in purple and the branch's pull request with its checks passed" width="430"> |
+
+It works the same in the Claude Code extension for VS Code, where a file opens from its **⋯** menu.
 
 ### Built With
 
