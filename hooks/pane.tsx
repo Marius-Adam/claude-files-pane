@@ -1,11 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, RenderInput, Space } from 'claude-code'
 
-import type { Menu, Touch, View } from '../types'
+import type { Menu, Pr, Touch, View } from '../types'
 import { absOf, cardSince, follow, reveal, toggleDiff } from './activity'
-import { rowsOf } from './diff'
-import { forget, indexFiles, listDir, redraw, refreshGit, sessionDir, SKIP } from './disk'
+import { diffView } from './diffview'
+import { forget, indexFiles, JUNK, listDir, redraw, refreshGit, sessionDir, SKIP } from './disk'
 import { folderApp, hostOf, openIn, showInFolder } from './editors'
+import { openFile } from './file'
 import { fileIcon, folderIcon } from './icons'
 import {
   ADDED,
@@ -42,9 +43,10 @@ import { DEFAULT_VIEW, PANE } from './state'
 // uses it, so every file names its own; state.ts lists the tags they must all share.
 const diff = atom({ plugin: 'files-pane', key: 'diff' } as const, null, { shape: 'diff-2' })
 const earlier = atom({ plugin: 'files-pane', key: 'earlier' } as const, [], { shape: 'touched-3' })
-const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-4' })
+const git = atom({ plugin: 'files-pane', key: 'git' } as const, null, { shape: 'git-6' })
 const menu = atom({ plugin: 'files-pane', key: 'menu' } as const, null, { shape: 'menu-2' })
 const now = atom({ plugin: 'files-pane', key: 'now' } as const, null, { shape: 'now-3' })
+const pr = atom({ plugin: 'files-pane', key: 'pr' } as const, null, { shape: 'pr-2' })
 const scope = atom({ plugin: 'files-pane', key: 'scope' } as const, 'turn', { shape: 'scope-1' })
 const isTouchedAll = atom({ plugin: 'files-pane', key: 'isTouchedAll' } as const, false)
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
@@ -56,6 +58,8 @@ const TREE_ROWS = 300
 const MATCHES = 50
 // The touched list shows its newest files up to this many, and offers the rest a press away.
 const TOUCHED_ROWS = 8
+// A pull request's pill, coloured as GitHub colours where it stands.
+const PR_COLORS: Record<Pr['state'], string> = { open: DONE, draft: MUTED, merged: READ, closed: REMOVED }
 
 // The surfaces whose pane held the keyboard while a file's menu was open. A click away from the
 // pane (into the chat, the prompt) takes the keyboard from it, and that closes the menu, as a
@@ -63,12 +67,17 @@ const TOUCHED_ROWS = 8
 // closes nothing on the desktop.
 const focusedWithMenu = new Set<string>()
 
+// Two presses on one folder's row this close together are a double click: a press carries no click
+// count, so the pane times them itself.
+const DOUBLE_MS = 400
+let folderPress: { path: string; at: number } | null = null
+
 // The pane: the card saying what Claude is doing, git's line, search, the toolbar, the files Claude
 // touched and the project's tree, each file with its actions behind a ⋯. Drawn by register.tsx's
 // `ui.render` hook for the pane.
 export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const elements = $.ui.resolve(e)
-    const { Box, Text, Button } = elements
+    const { Box, Text, Button, Link } = elements
     // Search needs a text field and the icons an SVG, which not every surface draws.
     const Input = 'Input' in elements ? elements.Input : null
     // The terminal's table answers `in` for Svg too, but draws none: ask the surface.
@@ -84,7 +93,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         redraw($)
       })
     }
-    const [cur, list, prior, sc, isAll, v, g, open, acts, foot] = await Promise.all([
+    const [cur, list, prior, sc, isAll, v, g, found, open, acts, foot] = await Promise.all([
       read($, now),
       read($, touched),
       read($, earlier),
@@ -92,6 +101,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       read($, isTouchedAll),
       read($, view),
       read($, git),
+      read($, pr),
       read($, diff),
       read($, menu),
       read($, status),
@@ -104,6 +114,12 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const home = v.root || cwd
     const project = base(home)
     const changed = new Set(g?.changed ?? [])
+    // The folders git names whole as untracked (`out/`, as `git status` prints one), without the
+    // slash: each is one change, and it and everything in it are untracked.
+    const untracked = (g?.changed ?? []).flatMap(one => (one.endsWith('/') ? [one.slice(0, -1)] : []))
+    const isUntracked = (path: string) => untracked.some(dir => path === dir || path.startsWith(`${dir}/`))
+    // Whether git reports a file as changed, itself or as part of an untracked folder.
+    const isChanged = (path: string) => changed.has(path) || isUntracked(path)
     // Whether the tree shows only those files and the folders down to them ("N changed" pressed).
     const isFiltered = v.changed !== null && changed.size > 0
     // A touched file as the tree spells it, relative to the project shown; null outside it.
@@ -131,9 +147,19 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       redraw($)
     }
 
-    // A press on a closed folder's row opens it in place; on an open one, goes into it: the tree
-    // then shows that folder, with the .. row above leading back. Its caret only opens and closes it.
-    const openOrEnter = async (path: string) => (v.expanded.includes(path) ? setView({ dir: path }) : toggle(path))
+    // A press on a folder's row opens or shuts it in place, as its caret does; a double click goes
+    // into it: the tree then shows that folder as its first row, with the way up at its end. The
+    // double click's first press opened or shut it, so going in puts that back.
+    const openOrEnter = async (path: string) => {
+      const at = await $.clock.now()
+      const since = folderPress?.path === path ? at - folderPress.at : -1
+      folderPress = { path, at }
+      if (since < 0 || since >= DOUBLE_MS) return toggle(path)
+
+      folderPress = null
+      await toggle(path)
+      await setView({ dir: path })
+    }
 
     // A file's actions, behind the ⋯ at the end of its row: open under the row for one file at a
     // time, in the list it was pressed in. A diff belongs to the actions it was opened from.
@@ -176,7 +202,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // else. The tree goes to the project's top when a file is outside the folder it shows. A deleted
     // file has no row, so opens nothing.
     const toggleChanged = async () => {
-      const paths = g?.changed ?? []
+      // An untracked folder shows closed, as one change: the folders above it open, not it.
+      const paths = (g?.changed ?? []).map(one => one.replace(/\/$/, ''))
       const next = await update($, view, old => {
         if (old.changed !== null) return unfiltered(old)
 
@@ -244,7 +271,6 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           paddingX={0}
           paddingY={0}
           flexShrink={0}
-          hover={{ backgroundColor: state === 'on' ? tint(FOLDER, '2e') : HOVER }}
         >
           {button}
         </Box>
@@ -261,62 +287,25 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Text size="footnote">⋯</Text>
       </Button>
     )
-
-    // A diff as an editor shows one, a row a line: its number in the file, the change's mark, the
-    // line cut at the row's end. Where the surface paints, an added or removed row is tinted;
-    // the terminal colours its text instead. Each hunk opens on the line it starts at and the
-    // function around it, as git names it.
-    const diffView = (text: string, id: string) => {
-      const rows = rowsOf(text)
-      const digits = String(Math.max(...rows.map(row => row.line))).length
-      const number = (n: number | null) => (n === null ? '' : String(n)).padStart(digits, '\u00a0')
-      const MARKS = { add: '+', del: '−', same: '\u00a0' } as const
-
-      return (
-        <Box key={`diffview:${id}`} flexDirection="column" {...rounded(CARD_EDGE)} paddingY={xs} overflow="hidden">
-          {rows.map((row, i) =>
-            row.kind === 'hunk' ? (
-              <Box key={`hunk:${id}:${i}`} gap={1} paddingX={1} marginTop={i === 0 ? undefined : xs} overflow="hidden">
-                <Text mono dimColor size="footnote">
-                  {number(null)}
-                </Text>
-                <Text dimColor size="footnote" wrap="truncate-end">
-                  {row.context ? `Line ${row.line} · ${row.context}` : `Line ${row.line}`}
-                </Text>
-              </Box>
-            ) : (
-              <Box
-                key={`line:${id}:${i}`}
-                gap={1}
-                paddingX={1}
-                overflow="hidden"
-                backgroundColor={isRich && row.kind !== 'same' ? tint(row.kind === 'add' ? ADDED : REMOVED, '1f') : undefined}
-              >
-                <Text mono dimColor size="footnote">
-                  {number(row.line)}
-                </Text>
-                <Text mono size="footnote" color={row.kind === 'add' ? ADDED : row.kind === 'del' ? REMOVED : undefined} dimColor={row.kind === 'same'}>
-                  {MARKS[row.kind]}
-                </Text>
-                <Box flexShrink={1} minWidth={0} overflow="hidden">
-                  <Text
-                    mono
-                    size="footnote"
-                    wrap="truncate-end"
-                    color={isRich || row.kind === 'same' ? undefined : row.kind === 'add' ? ADDED : REMOVED}
-                    dimColor={row.kind === 'same' && !isRich}
-                  >
-                    {/* A line cut at its end draws on one line, where spaces would collapse: its indent
-                        is held in non-breaking ones. */}
-                    {row.text.replace(/^ +/, lead => '\u00a0'.repeat(lead.length)) || '\u00a0'}
-                  </Text>
-                </Box>
-              </Box>
-            ),
-          )}
-        </Box>
+    // Where a press layer spans a file's row, the ⋯ floats over it: an absolute Box paints over
+    // every Box in the flow, and only a later absolute one paints over it. A blank twin keeps the
+    // ⋯'s room at the row's end, as wide as it is, so the counts and marks do not slide under it.
+    const moreRoom = (where: Menu['where'], abs: string) =>
+      canLayer ? (
+        <Button key={`room:${where}:${abs}`} plain dimColor onPress={() => toggleActions(where, abs)}>
+          <Text size="footnote" color={CLEAR}>
+            ⋯
+          </Text>
+        </Button>
+      ) : (
+        more(where, abs)
       )
-    }
+    const moreOver = (where: Menu['where'], abs: string) =>
+      canLayer ? (
+        <Box position="absolute" top={0} right={0} bottom={0} alignItems="center">
+          {more(where, abs)}
+        </Box>
+      ) : null
 
     // A file's row and, while its ⋯ is pressed, its actions in a popover over the row above, at the
     // ⋯'s end, laid out as the app's own menus are: put it in the prompt and copy its path; see its
@@ -377,6 +366,14 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       }
       const groups: Item[][] = [
         [
+          {
+            key: 'file',
+            label: 'Open',
+            onPress: async () => {
+              await closeActions()
+              await openFile($, abs)
+            },
+          },
           { key: 'mention', label: '@ Mention', onPress: mention },
           { key: 'copy', label: 'Copy', onPress: () => toggleSub('copy'), isSub: true, isOpen: sub === 'copy' },
           ...(sub === 'copy'
@@ -470,7 +467,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           ? [
               <Box key={`diff:${id}`} flexDirection="column" gap={xs} paddingLeft={indent + 1} paddingRight={1}>
                 {open.text ? (
-                  diffView(open.text, id)
+                  diffView(elements, open.text, id, { isRich, xs, sides: 1 })
                 ) : (
                   <Text dimColor size="footnote">
                     No changes since the last commit.
@@ -527,6 +524,24 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // part clips the layer, so it holds `overflow="hidden"`.
     const pressAway = (key: string) => (acts ? pressAnywhere(`away:${key}`, closeActions) : null)
 
+    // A press on a file's row opens it in the file pane. Where the surface lays a press over a row,
+    // the layer spans the whole row, as a folder's does, so the two light alike under the pointer.
+    // It comes first in the row, and the ⋯ floats over it (`moreOver`): the ⋯ stays its own.
+    // On the terminal the name is the Button. VS Code, which does neither, opens it from the ⋯.
+    const openLayer = (where: Menu['where'], abs: string) => (canLayer ? pressAnywhere(`open-row:${where}:${abs}`, () => openFile($, abs)) : null)
+    // A row pressed anywhere lights under the pointer, its own tint a step stronger. The surface
+    // keeps a keyed Box's `hover` lit under a resting pointer across a redraw, which a Button's own
+    // light under the pointer is not: while Claude streams, the pane redraws every second or so.
+    const lit = (accent?: string) => (canLayer ? { hover: { backgroundColor: accent ? tint(accent, '3d') : HOVER } } : {})
+    const opens = (where: Menu['where'], abs: string, name: JSX.Element) =>
+      isRich ? (
+        name
+      ) : (
+        <Button key={`open-row:${where}:${abs}`} plain onPress={() => openFile($, abs)}>
+          {name}
+        </Button>
+      )
+
     const dot = (color: string, isLive = false, size = 12) =>
       Svg ? <Svg source={dotSvg(color, isLive)} alt={isLive ? 'live' : 'mark'} width={size} height={size} /> : <Text color={color}>●</Text>
 
@@ -542,8 +557,9 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
     // A rounded chip of a color's tint, a live one with a pulsing dot. It never shrinks, which would
     // wrap its label ("0 / files") in a narrow header.
-    // Given a press, the pill is a control: it lights under the pointer, a press anywhere on it counts.
-    const pill = (label: string, color: string, isLive = false, press?: { key: string; onPress: () => unknown }) =>
+    // Given a press, the pill is a control: a press anywhere on it counts.
+    // Given an `href`, its label is a link to it.
+    const pill = (label: string, color: string, isLive = false, press?: { key: string; onPress: () => unknown }, href?: string) =>
       isRich && (canLayer || !press) ? (
         <Box
           key={press ? `pill:${press.key}` : undefined}
@@ -554,12 +570,31 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           gap={xs}
           alignItems="center"
           flexShrink={0}
-          {...(press ? { overflow: 'hidden', hover: { backgroundColor: tint(color, '3d') } } : {})}
+          {...(press || (href && canLayer) ? { overflow: 'hidden' } : {})}
         >
           {isLive && dot(color, true)}
-          <Text color={color} size="footnote" weight="semibold">
-            {label}
-          </Text>
+          {/* The desktop opens a Link it draws itself, not one inside a Text, and draws it a line of
+              its own type tall, taller than a pill's label. So where a layer can lie over the pill,
+              the label is drawn as every pill's is and the Link lies over it, pressed anywhere;
+              elsewhere the Link holds the label. */}
+          {href && !canLayer ? (
+            <Link key={`link:${href}`} href={href}>
+              <Text color={color} size="footnote" weight="semibold">
+                {label}
+              </Text>
+            </Link>
+          ) : (
+            <Text color={color} size="footnote" weight="semibold">
+              {label}
+            </Text>
+          )}
+          {href && canLayer && (
+            <Box position="absolute" top={0} left={0} right={0} bottom={0} overflow="hidden">
+              <Link key={`link:${href}`} href={href}>
+                <Text color={CLEAR}>{' '.repeat(label.length + 8)}</Text>
+              </Link>
+            </Box>
+          )}
           {press && pressAnywhere(press.key, press.onPress)}
         </Box>
       ) : press ? (
@@ -570,7 +605,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Button>
       ) : (
         <Text color={color} size="footnote" weight="semibold">
-          {` ${label} `}
+          {href ? [' ', <Link key="link" href={href}>{label}</Link>, ' '] : ` ${label} `}
         </Text>
       )
 
@@ -605,7 +640,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // The name takes Claude's color while Claude has the file, so this is what still says git has
     // the file changed.
     const mark = (path: string | null) => {
-      const letter = path === null ? undefined : g?.marks[path]
+      const letter = path === null ? undefined : (g?.marks[path] ?? (isUntracked(path) ? 'U' : undefined))
 
       return letter ? (
         <Text color={DIRTY} size="footnote" weight="semibold">
@@ -765,12 +800,12 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const walk = async (dir: string, depth: number): Promise<void> => {
       const entries = await listDir($, listPath(home, dir))
       const sorted = entries
+        .filter(entry => !JUNK.has(entry.name))
         .filter(entry => !SKIP.has(entry.name) || v.showHidden)
         .filter(entry => v.showHidden || !entry.name.startsWith('.'))
-        .filter(entry => !isFiltered || (entry.kind === 'dir' ? changedUnder(join(dir, entry.name)) > 0 : changed.has(join(dir, entry.name))))
-        .sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name))
-      // A file keeps the chevron's width only to line up with a folder beside it.
-      const hasDirs = sorted.some(entry => entry.kind === 'dir')
+        .filter(entry => !isFiltered || isChanged(join(dir, entry.name)) || (entry.kind === 'dir' && changedUnder(join(dir, entry.name)) > 0))
+        // Folders first, then names as a person reads them: `file2` before `file10`.
+        .sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name, undefined, { numeric: true }))
       for (const entry of sorted) {
         if (rows.length >= TREE_ROWS) return
 
@@ -779,11 +814,15 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
         if (entry.kind === 'dir') {
           const isOpen = v.expanded.includes(path)
-          const count = SKIP.has(entry.name) ? 0 : changedUnder(path)
+          // A folder git names whole as untracked, or one inside it, says U, as an untracked file
+          // does; any other says how many changes are under it.
+          const isNew = isUntracked(path)
+          const count = SKIP.has(entry.name) || isNew ? 0 : changedUnder(path)
+          const isDirtyDir = isNew || count > 0
           const active = activeUnder(path)
-          const folderColor = entry.name.startsWith('.') ? MUTED : count > 0 ? EDIT : FOLDER
+          const folderColor = entry.name.startsWith('.') ? MUTED : isDirtyDir ? EDIT : FOLDER
           const name = (
-            <Text color={active ? accentOf(active) : count > 0 ? DIRTY : undefined} dimColor={!active && count === 0 && isIgnored(path, true)}>
+            <Text color={active ? accentOf(active) : isDirtyDir ? DIRTY : undefined} dimColor={!active && !isDirtyDir && isIgnored(path, true)}>
               {entry.name}
             </Text>
           )
@@ -792,13 +831,13 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Box
               key={`row:${path}`}
               {...rounded()}
+              {...lit()}
               justifyContent="space-between"
               alignItems="center"
               gap={1}
               paddingX={1}
               paddingY={0}
               overflow="hidden"
-              hover={{ backgroundColor: HOVER }}
             >
               <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
                 {/* The chevron sits close to the folder's icon; a press on it or the name opens it. */}
@@ -806,9 +845,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   {chevron(isOpen, () => toggle(path), `caret:${path}`)}
                   {icon(folderIcon(entry.name, isOpen), entry.name, '▪', folderColor, 16)}
                 </Box>
-                {/* Where the surface paints but lays no press over the row, a Button is filled: the
-                    name is text there, and the caret takes the press. */}
-                {isRich && !canLayer ? (
+                {/* Where the surface paints the name is text, as a file's is: the desktop pads a
+                    Button, which would set the name off from a file's, and VS Code fills one. A
+                    press on the row or the caret opens it there. */}
+                {isRich ? (
                   name
                 ) : (
                   <Button key={`dir:${path}`} plain onPress={() => openOrEnter(path)}>
@@ -816,9 +856,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   </Button>
                 )}
               </Box>
-              {(active || count > 0) && (
+              {(active || isDirtyDir) && (
                 <Box flexShrink={0} gap={xs} alignItems="center">
                   {active && dot(accentOf(active), true)}
+                  {isNew && mark(path)}
                   {count > 0 && (
                     <Text color={DIRTY} size="footnote" tabular>
                       {count}
@@ -830,10 +871,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             </Box>,
           )
 
-          if (isOpen && depth < 12) await walk(path, depth + 1)
+          if (isOpen && depth < 13) await walk(path, depth + 1)
         } else {
           const touch = byPath.get(path)
-          const isDirty = changed.has(path)
+          const isDirty = isChanged(path)
           const accent = touch ? accentOf(touch) : isDirty ? DIRTY : undefined
           // The row's tint: strong while Claude has the file or just committed it, faint once it let go.
           const background = touch && isRich ? tint(accentOf(touch), touch.isActive || touch.isCommitted ? '2e' : '14') : undefined
@@ -856,30 +897,37 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               paddingRight={0}
               paddingY={0}
               backgroundColor={background}
+              {...lit(touch && accentOf(touch))}
               overflow="hidden"
-              hover={{ backgroundColor: background ?? HOVER }}
             >
               {touch?.isActive && shimmer(accentOf(touch))}
-              <Box gap={1} alignItems="center" paddingLeft={indent} flexShrink={1} minWidth={0} overflow="hidden">
-                {/* The chevron's width, unseen, so a file's icon lines up with a sibling folder's. */}
+              {openLayer('tree', join(home, path))}
+              <Box gap={1} alignItems="center" paddingLeft={indent} flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
+                {/* The chevron's width, unseen, in every file's row: its icon lines up with a sibling
+                    folder's, and with the row above when no folder is beside it. */}
                 <Box gap={xs} alignItems="center">
-                  {hasDirs && chevron()}
+                  {chevron()}
                   {chip(entry.name)}
                 </Box>
-                <Text
-                  color={accent}
-                  dimColor={!accent && isIgnored(path, false)}
-                  weight={touch?.isActive || touch?.isCommitted || isDirty ? 'semibold' : undefined}
-                  wrap="truncate-end"
-                >
-                  {entry.name}
-                </Text>
+                {opens(
+                  'tree',
+                  join(home, path),
+                  <Text
+                    color={accent}
+                    dimColor={!accent && isIgnored(path, false)}
+                    weight={touch?.isActive || touch?.isCommitted || isDirty ? 'semibold' : undefined}
+                    wrap="truncate-end"
+                  >
+                    {entry.name}
+                  </Text>,
+                )}
               </Box>
               <Box flexShrink={0} gap={1} alignItems="center">
                 {right}
                 {mark(path)}
-                {more('tree', join(home, path))}
+                {moreRoom('tree', join(home, path))}
               </Box>
+              {moreOver('tree', join(home, path))}
             </Box>
           )
 
@@ -888,18 +936,25 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       }
     }
 
-    // The way up, the tree's first row: the folder above the one shown, past the project's top too,
-    // by its name.
-    const upRow = (
-      <Box key="row:.." {...rounded()} alignItems="center" gap={1} paddingX={1} paddingY={0} overflow="hidden" hover={{ backgroundColor: HOVER }}>
-        <Box gap={xs} alignItems="center">
-          {chevron()}
-          {icon(folderIcon('..', false), 'up', '▪', MUTED, 16)}
+    // The tree's first row: the folder shown, open, its contents listed under it, as VS Code's
+    // explorer names its root. At its end, the way up to the folder above, past the project's top too.
+    const shown = nameAt(home, v.dir)
+    const rootRow = (
+      <Box key="row:." {...rounded()} justifyContent="space-between" alignItems="center" gap={1} paddingX={1} paddingY={0} overflow="hidden">
+        <Box gap={1} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
+          <Box gap={xs} alignItems="center">
+            {chevron()}
+            {icon(folderIcon(shown, true), shown, '▪', shown.startsWith('.') ? MUTED : FOLDER, 16)}
+          </Box>
+          <Text weight="semibold" wrap="truncate-end">
+            {shown}
+          </Text>
         </Box>
-        <Button key="up" plain dimColor onPress={() => setView({ dir: parentOf(v.dir), expanded: [] })}>
-          {`.. ${nameAt(home, parentOf(v.dir))}`}
-        </Button>
-        {pressAnywhere('up:row', () => setView({ dir: parentOf(v.dir), expanded: [] }))}
+        <Box flexShrink={0}>
+          <Button key="up" plain dimColor onPress={() => setView({ dir: parentOf(v.dir), expanded: [] })}>
+            <Text size="footnote">↑ Up</Text>
+          </Button>
+        </Box>
       </Box>
     )
 
@@ -909,6 +964,20 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     if (!query) await walk(v.dir, 0)
 
     const totals = Object.values(g?.lines ?? {}).reduce<[number, number]>(([a, d], [x, y]) => [a + x, d + y], [0, 0])
+    // The pull request found for the branch shown: one found for a branch since left is not its.
+    // Its checks and review matter only while it is open.
+    const shownPr = g && found?.branch === g.branch ? found : null
+    const isPrOpen = shownPr?.state === 'open' || shownPr?.state === 'draft'
+    // A failing check outweighs one still running, which outweighs the rest passing.
+    const checksPill = ({ passed, failed, running }: Pr['checks']) =>
+      failed > 0
+        ? pill(`✗ ${failed} failing`, REMOVED)
+        : running > 0
+          ? pill('◌ checks running', DIRTY, true)
+          : passed > 0
+            ? pill('✓ checks pass', DONE)
+            : null
+    const conflicts = Object.values(g?.marks ?? {}).filter(mark => mark === 'C').length
 
     // A section's head: its name in small caps and, beside it, a quiet count or place, or controls.
     // In a narrow pane the name gives way first: its weight is far above the aside's, which shrinks
@@ -986,10 +1055,20 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               paddingY={isRich ? xs : 0}
               flexWrap="wrap"
             >
-              <Box gap={xs} alignItems="center" overflow="hidden">
+              <Box gap={xs} alignItems="center" overflow="hidden" flexWrap="wrap">
                 {icon(BRANCH_SVG, 'branch', '⎇', READ, 16)}
                 <Text weight="semibold">{g.branch}</Text>
+                {g.op && pill(g.op.step ? `${g.op.verb} ${g.op.step[0]}/${g.op.step[1]}` : g.op.verb, EDIT)}
+                {conflicts > 0 && pill(plural(conflicts, 'conflict'), REMOVED)}
                 {g.ahead ? pill(`↑${g.ahead}`, DONE) : null}
+                {g.behind ? pill(`↓${g.behind}`, TOOL) : null}
+                {g.upstream === 'unset' && pill('not pushed', MUTED)}
+                {g.upstream === 'gone' && pill('upstream gone', MUTED)}
+                {shownPr && pill(`#${shownPr.number} ${shownPr.state}`, PR_COLORS[shownPr.state], false, undefined, shownPr.url)}
+                {isPrOpen && checksPill(shownPr.checks)}
+                {isPrOpen && shownPr.review === 'approved' && pill('approved', DONE)}
+                {isPrOpen && shownPr.review === 'changes' && pill('changes requested', REMOVED)}
+                {g.worktreeOf && pill(`worktree of ${g.worktreeOf}`, FOLDER)}
                 {pressAway('branch')}
               </Box>
               {g.changed.length === 0 ? (
@@ -1044,7 +1123,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Box gap={xs} flexWrap="wrap" paddingX={1} alignItems="center">
           {tool('refresh', '↻ Refresh', async () => {
             forget()
-            await refreshGit($)
+            await refreshGit($, true)
             await update($, tick, n => n + 1)
             redraw($)
           })}
@@ -1098,7 +1177,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             // since a commit Claude did not make here (another session's, the app's, the person's)
             // leaves nothing to show; else as Claude left it.
             const key = keyOf(one.path)
-            const canDiff = g && key !== null ? changed.has(key) : one.isEdited && !one.isCommitted
+            const canDiff = g && key !== null ? isChanged(key) : one.isEdited && !one.isCommitted
             // As in the tree: the tint and shimmer say what Claude did with the file, the name takes its color.
             const background = isRich ? tint(accentOf(one), one.isActive || one.isCommitted ? '2e' : '14') : undefined
 
@@ -1107,6 +1186,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 key={`touch:${one.path}`}
                 {...rounded(one.isActive ? tint(accentOf(one), '59') : CLEAR)}
                 backgroundColor={background}
+                {...lit(accentOf(one))}
                 justifyContent="space-between"
                 alignItems="center"
                 gap={1}
@@ -1114,16 +1194,20 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 paddingRight={0}
                 paddingY={0}
                 overflow="hidden"
-                hover={{ backgroundColor: background ?? HOVER }}
               >
                 {one.isActive && shimmer(accentOf(one))}
+                {openLayer('touched', abs)}
                 {/* One line: the name keeps its room, the folder gives way from its start. */}
-                <Box gap={1} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
+                <Box gap={1} alignItems="center" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
                   {chip(base(one.path))}
                   <Box flexShrink={1}>
-                    <Text color={accentOf(one)} weight="semibold" wrap="truncate-end">
-                      {base(one.path)}
-                    </Text>
+                    {opens(
+                      'touched',
+                      abs,
+                      <Text color={accentOf(one)} weight="semibold" wrap="truncate-end">
+                        {base(one.path)}
+                      </Text>,
+                    )}
                   </Box>
                   <Box flexShrink={8} minWidth={0}>
                     <Text dimColor size="footnote" wrap="truncate-start">
@@ -1137,8 +1221,9 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   <Text dimColor size="footnote" tabular>
                     {timeOf(one.at)}
                   </Text>
-                  {more('touched', abs)}
+                  {moreRoom('touched', abs)}
                 </Box>
+                {moreOver('touched', abs)}
               </Box>,
               'touched',
               abs,
@@ -1155,7 +1240,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             ) : v.dir !== '' || v.root !== '' ? (
               <Box gap={xs} alignItems="center" flexShrink={1} minWidth={0}>
                 {tool('home', '⌂ Project', () => setView({ root: '', dir: '', expanded: [] }))}
-                {place(v.dir ? base(v.dir) : project)}
+                {place(nameAt(home, v.dir))}
               </Box>
             ) : (
               place(project)
@@ -1180,22 +1265,27 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   paddingRight={0}
                   paddingY={0}
                   overflow="hidden"
-                  hover={{ backgroundColor: HOVER }}
                 >
-                  <Box gap={1} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
+                  {openLayer('match', join(home, path))}
+                  <Box gap={1} alignItems="center" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
                     {chip(base(path))}
-                    <Text color={byPath.has(path) ? accentOf(byPath.get(path)!) : changed.has(path) ? DIRTY : undefined} wrap="truncate-start">
-                      {path}
-                    </Text>
+                    {opens(
+                      'match',
+                      join(home, path),
+                      <Text color={byPath.has(path) ? accentOf(byPath.get(path)!) : isChanged(path) ? DIRTY : undefined} wrap="truncate-start">
+                        {path}
+                      </Text>,
+                    )}
                   </Box>
-                  <Box flexShrink={0}>{more('match', join(home, path))}</Box>
+                  <Box flexShrink={0}>{moreRoom('match', join(home, path))}</Box>
+                  {moreOver('match', join(home, path))}
                 </Box>,
                 'match',
                 join(home, path),
-                changed.has(path),
+                isChanged(path),
               ),
             )}
-            {!query && upRow}
+            {!query && rootRow}
             {rows}
             {rows.length >= TREE_ROWS && (
               <Box paddingX={1} overflow="hidden">

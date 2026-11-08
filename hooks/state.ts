@@ -1,6 +1,8 @@
 import type { View } from '../types'
 
 export const PANE = 'files-pane'
+// The pane an opened file shows in, a tab beside the Files pane.
+export const FILE_PANE = 'files-pane-file'
 
 // Hidden files show by default, as in VS Code's explorer: the toolbar offers to hide them.
 export const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], showSizes: false, showHidden: true, changed: null }
@@ -15,8 +17,10 @@ export const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], 
 //   scope    'scope-1'    which of those the list shows: Scope
 //   isTouchedAll (none)   whether that list shows every file, past the newest few: boolean
 //   view     'view-4'     the tree's controls: View
-//   git      'git-4'      git's view of the project shown: Git | null
+//   git      'git-6'      git's view of the project shown: Git | null
+//   pr       'pr-2'       the pull request for the branch shown: Pr | null
 //   diff     'diff-2'     the diff open under a file's row: Diff | null
 //   menu     'menu-2'     the file whose actions are open, and their submenu: Menu | null
 //   status   'status-1'   the commit line at the pane's foot: Status | null
 //   tick     (none)       bumped by Refresh, so the tree is listed again
+//   opened   'opened-1'   the file open in the file pane, and its tab: Opened | null

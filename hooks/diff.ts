@@ -1,8 +1,9 @@
 // A unified diff as the rows the pane draws: a header row per hunk, then each line with its number
-// in the file, as an editor's diff shows it.
+// in the file, as an editor's diff shows it. A hunk's row also holds where it starts in the file
+// before the change, so a view can number each line on both sides, as GitHub does.
 
 export type DiffRow =
-  | { kind: 'hunk'; line: number; context: string }
+  | { kind: 'hunk'; line: number; old: number; context: string }
   | { kind: 'add' | 'del' | 'same'; line: number; text: string }
 
 // A tab as two spaces: the pane is narrow, and a row is cut at its end, never wrapped.
@@ -31,7 +32,7 @@ export function rowsOf(text: string): DiffRow[] {
       now = Number(header[2])
       // A new file's hunk starts at line 0 of nothing: its first line is 1.
       if (now === 0) now = 1
-      rows.push({ kind: 'hunk', line: now, context: header[3]!.trim() })
+      rows.push({ kind: 'hunk', line: now, old, context: header[3]!.trim() })
       continue
     }
 

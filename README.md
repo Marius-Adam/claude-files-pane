@@ -21,6 +21,8 @@
     <br />
     <a href="#about-the-project">View Demo</a>
     &middot;
+    <a href="CHANGELOG.md">What's New</a>
+    &middot;
     <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?template=bug_report.yml">Report Bug</a>
     &middot;
     <a href="https://github.com/Marius-Adam/claude-files-pane/issues/new?template=feature_request.yml">Request Feature</a>
@@ -46,14 +48,50 @@
 
 ## About The Project
 
-<img src="docs/demo.gif" alt="The Files pane in the Claude desktop app, recorded as Claude fixes a bug in this repository: the files it reads turn purple in the touched list, the two it edits turn orange with their line counts, the card shows the test run, and a file's ⋯ menu offers Copy, Open in an editor and its diff, drawn as numbered rows" width="880">
+<img src="docs/demo.gif" alt="The Files pane in the Claude desktop app as Claude fixes a discount bug: its edit and a sed that renames a function turn five files orange, then green once committed; after it pushes and opens a pull request, the branch row shows the PR with its checks running, then passing. A Markdown file opens as a preview beside the pane, a commit in a file's History shows what it changed, and a line added from a terminal marks the file changed within seconds, its Diff a press away" width="880">
+
+### New in 1.0
+
+- **Open any file** beside the chat, with its text, its diff and every commit that changed it
+- **Your pull request** in the branch row, with its checks and review
+- **Your own changes**, made in an editor or a terminal, show within seconds
+- **A `sed`, a script or a formatter** Claude runs counts as an edit
+
+Everything that changed is in the [changelog](CHANGELOG.md).
+
+### Features
+
+**Follow Claude**
 
 - **Live card**: Claude's thinking, the command it runs, the file it reads or edits
 - **Tree that follows Claude**: opens to each file it edits, even in another project
-- **Touched list**: files read or edited this turn or session, with lines added and removed
-- **Git**: branch, commits ahead, changed files, ignored files dimmed
+- **Touched list**: files read or edited this turn or session, with lines added and removed, including files changed by a command Claude runs
+
+**Open a file**
+
+- **File**: its text with line numbers, or a Markdown file as its preview
+- **Diff**: what changed since the last commit
+- **History**: the commits that changed it, each a press from what it changed
+
+**Git at a glance**
+
+- Branch, commits ahead and behind, and its upstream
+- The branch's pull request with its checks and review
+- The worktree you're in, and a rebase or merge in progress with its conflicts
+- Changed files, with ignored files dimmed
+
+**Find and act**
+
 - **Search** with VS Code's icons, best matches first
-- Works in the desktop app, VS Code and the terminal
+- A file's **⋯** menu: `@`-mention it, copy its path, see its diff, or open it in your editor, Finder or Explorer
+
+### Works everywhere
+
+| Desktop app | Terminal |
+| :-: | :-: |
+| <img src="docs/desktop.png" alt="The Files pane beside the chat in the Claude desktop app: the branch's pull request with its checks running, and the five files Claude edited, committed" width="430"> | <img src="docs/terminal.png" alt="The Files pane drawn beside a claude session in the terminal, with the three files Claude read in purple and the branch's pull request with its checks passed" width="430"> |
+
+It works the same in the Claude Code extension for VS Code, where a file opens from its **⋯** menu.
 
 ### Built With
 
@@ -98,12 +136,15 @@ claude plugin uninstall files-pane@marius-adam
 ## Usage
 
 - `/files` brings the pane back if you close it.
-- A press on a folder opens it; a press on an open folder goes into it, and the **..** row, named for the folder above, leads back.
-- **N changed** shows only the files git reports changed, in their folders; press it again for the whole tree.
+- A click on a folder opens or closes it; a double click goes into it. The tree's first row names the folder you are in, and its **↑ Up** leads to the folder above.
+- **N changed** shows only the files git reports changed, in their folders; press it again for the whole tree. A folder git tracks nothing in counts as one change, as `git status` shows it, and it and everything in it are marked **U**.
 - Colours tell you what happened to a file: read **purple**, edited **orange**, uncommitted **yellow**, committed **green**.
-- A file's **⋯** menu can `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor, Finder or Explorer.
+- A press on a file opens it in a pane of its own, beside the Files pane, with three tabs: **File**, its text with its lines numbered (a Markdown file as its preview, a press from its source), **Diff**, what changed since the last commit, and **History**, the commits that changed it, each a press from what it changed. In VS Code, open it from its **⋯**.
+- A file a command changes (a `sed`, a script, a formatter) counts as edited by Claude, as an Edit does, in a git repository. Not counted: files a command rewrites by moving HEAD, stashing, or starting or ending a merge or rebase, since git brought those in. Counted: a file a command puts back as it was committed (`git restore`), as Claude changed it. Counted by mistake: a file you save while one of Claude's commands is running, since the pane can't tell who wrote it.
+- What changes without Claude, such as a file you make in your editor or a branch you check out in a terminal, shows within a few seconds while the pane is in sight.
+- A file's **⋯** menu can open it, `@`-mention it, copy its path, show its diff, reveal it in the tree, or open it in your editor, Finder or Explorer.
 
-**Privacy:** the pane is read-only. It lists folders, reads git and looks for your editors, sends nothing anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows). [SECURITY.md](SECURITY.md#what-the-pane-runs) lists every command it runs, and says how to report a vulnerability.
+**Privacy:** the pane is read-only. It lists folders, reads the files you open, reads git, asks GitHub's CLI for the branch's pull request and looks for your editors, sends nothing else anywhere, writes to your prompt only on **@ Mention**, and opens an app only on **Open in** or **Show in Finder** (**Show in Explorer** on Windows). [SECURITY.md](SECURITY.md#what-the-pane-runs) lists every command it runs, and says how to report a vulnerability.
 
 **Tokens:** the pane costs none. Its hooks hand Claude's events on unchanged, and what it shows comes from your folders and git, so Claude never sees it. Only **@ Mention** adds to your prompt, the same as typing `@file`.
 
@@ -126,6 +167,8 @@ claude plugin list
 Files pane needs Claude Code 2.1.299 or newer, and should be listed as `files-pane@marius-adam` with its status enabled. In the terminal, update with `claude update`; the desktop app and the VS Code extension update with the app and the extension. Then restart Claude Code.
 
 **The tree has no git colours or branch.** Git is read only in the repository the session started in. A project the tree follows Claude into shows no git.
+
+**The branch's pull request does not show.** It comes from [GitHub's CLI](https://cli.github.com), which must be on the PATH and signed in to an account that can see the repository: check with `gh auth status`. Without it the pane works the same, with no pull request. The pane asks again on **↻ Refresh**.
 
 **Open in is missing, or lacks my editor.** On macOS the editor's app must be installed, and on Linux its command (`code`, `cursor`, `windsurf`, `zed`, `subl`) must be on the PATH. On Windows, see [Prerequisites](#prerequisites). The pane looks once a session, so restart Claude Code after installing one.
 
@@ -163,11 +206,12 @@ Pull requests go to `staging`. A release is one pull request from `staging` to `
 | :-- | :-- |
 | `hooks/register.tsx` | The mod's hooks: what Claude does reaches the pane through these |
 | `hooks/pane.tsx` | The pane's drawing: the card, git's line, search, the toolbar, the touched list and the tree |
-| `hooks/activity.ts` | Following Claude: the card's timing, commits, diffs |
-| `hooks/disk.ts` | Git, folder listings, the search index, a file's diff |
+| `hooks/file.tsx` | The file pane: a file opened from the tree, with its File, Diff and History tabs |
+| `hooks/activity.ts` | Following Claude: the card's timing, commits, diffs, the files a command changes |
+| `hooks/disk.ts` | Git, the branch's pull request, folder listings, the search index, a file's text, diff and history |
 | `hooks/paths.ts` | Paths and sizes as the pane prints them, and search ranking |
 | `hooks/look.ts` | Colours, type chips and SVGs |
-| `hooks/icons.ts`, `icon-svgs.ts` | Which vscode-icons icon a file or folder gets, and the SVGs (generated) |
+| `hooks/icons.ts`, `icon-svgs*.ts` | Which vscode-icons icon a file or folder gets, and the SVGs (generated, in two files to stay under the plugin directory's 256 KiB limit) |
 | `tests/` | Tests, against the terminal and desktop surfaces |
 
 To add an icon, map a name, extension or folder in `hooks/icons.ts` to a [vscode-icons](https://icon-sets.iconify.design/vscode-icons/) id, then:

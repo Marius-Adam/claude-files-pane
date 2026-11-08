@@ -45,7 +45,8 @@ const engine = (on: Parameters<TestBody>[1], head: Head, status: string[], ran: 
     if (argv.includes('symbolic-ref')) return isUnborn ? answer(0, 'main\n') : answer(1)
     if (argv.includes('rev-parse') && argv.includes('HEAD')) return isUnborn ? answer(128, 'HEAD\n') : answer(0, '9f3b210\n')
     if (argv.includes('status')) return answer(0, status.map(line => `${line}\0`).join(''))
-    if (argv.includes('rev-list')) return answer(128)
+    // A branch with no commit is no ref yet: `for-each-ref` finds nothing to print.
+    if (argv.includes('for-each-ref')) return answer(0)
     if (argv.includes('ls-files') && argv.includes('--error-unmatch')) return answer(status.some(one => one.startsWith('A ')) ? 0 : 1)
     if (argv.includes('diff') && argv.includes('HEAD')) return isUnborn ? answer(128) : answer(0)
     if (argv.includes('diff') && argv.includes('--no-index'))

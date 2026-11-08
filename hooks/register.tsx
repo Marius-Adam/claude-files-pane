@@ -3,7 +3,9 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import {
   absOf,
+  afterCommand,
   afterCommit,
+  changesPr,
   commitDir,
   describe,
   endWork,
@@ -17,11 +19,12 @@ import {
   touchOf,
   upsert,
 } from './activity'
-import { forget, headOf, redraw, refreshGit, sessionDir } from './disk'
+import { forget, headOf, lookForChanges, redraw, refreshGit, sessionDir, snapshotOf } from './disk'
 import { hostOf } from './editors'
+import { renderFile } from './file'
 import { renderPane } from './pane'
 import { base, rel, tailOf } from './paths'
-import { PANE } from './state'
+import { FILE_PANE, PANE } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
 // uses it, so every file names its own; state.ts lists the tags they must all share.
@@ -51,6 +54,7 @@ const setUp = async ($: EngineInterface) => {
   await $.command.register({ name: 'files', description: 'Show the Files pane: what Claude reads and edits, and the project tree' })
   void openPane($).catch(() => {})
   void refreshGit($)
+  lookForChanges($)
   // Ahead of the first ⋯, so its menu opens with the editors already found.
   void hostOf($)
 }
@@ -84,6 +88,8 @@ export const register: Register = on => {
         return await next(e)
       } finally {
         await afterCommit($, cwd, repo, before).catch(() => {})
+        // `git commit && git push`: the push may have opened or moved the pull request.
+        if (changesPr(e)) void refreshGit($, true)
       }
     }
 
@@ -91,15 +97,19 @@ export const register: Register = on => {
 
     if (!hit) {
       const id = await startWork($, { verb: 'working', tool: e.tool, ...describe(e, cwd) }).catch(() => 0)
+      // Where the repository stood before a command, so the files it changes count as Claude's.
+      const before = e.tool === 'Bash' ? await snapshotOf($).catch(() => null) : null
 
       try {
         return await next(e)
       } finally {
+        if (before) await afterCommand($, before).catch(() => {})
         await endWork($, id).catch(() => {})
         // A command may have made, moved or removed files: the tree lists its folders again, and
-        // git, which only a command can change, is read again.
+        // git, which only a command can change, is read again, with the pull request when the
+        // command may have changed it.
         forget()
-        if (e.tool === 'Bash') void refreshGit($)
+        if (e.tool === 'Bash') void refreshGit($, changesPr(e))
         redraw($)
       }
     }
@@ -220,4 +230,5 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => renderPane($, e))
+  on('ui.render', { component: 'Pane', requestId: FILE_PANE }, ($, e) => renderFile($, e))
 }
