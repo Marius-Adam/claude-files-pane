@@ -99,7 +99,7 @@ claude plugin uninstall files-pane@marius-adam
 
 - `/files` brings the pane back if you close it.
 - A click on a folder opens or closes it; a double click goes into it. The tree's first row names the folder you are in, and its **↑ Up** leads to the folder above.
-- **N changed** shows only the files git reports changed, in their folders; press it again for the whole tree.
+- **N changed** shows only the files git reports changed, in their folders; press it again for the whole tree. A folder git tracks nothing in counts as one change, as `git status` shows it, and it and everything in it are marked **U**.
 - Colours tell you what happened to a file: read **purple**, edited **orange**, uncommitted **yellow**, committed **green**.
 - A press on a file opens it in a pane of its own, beside the Files pane, with three tabs: **File**, its text with its lines numbered (a Markdown file as its preview, a press from its source), **Diff**, what changed since the last commit, and **History**, the commits that changed it, each a press from what it changed. In VS Code, open it from its **⋯**.
 - A file a command changes (a `sed`, a script, a formatter) counts as edited by Claude, as an Edit does, in a git repository. Not counted: files a command rewrites by moving HEAD, stashing, or starting or ending a merge or rebase, since git brought those in. Counted: a file a command puts back as it was committed (`git restore`), as Claude changed it. Counted by mistake: a file you save while one of Claude's commands is running, since the pane can't tell who wrote it.

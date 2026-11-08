@@ -114,6 +114,12 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const home = v.root || cwd
     const project = base(home)
     const changed = new Set(g?.changed ?? [])
+    // The folders git names whole as untracked (`out/`, as `git status` prints one), without the
+    // slash: each is one change, and it and everything in it are untracked.
+    const untracked = (g?.changed ?? []).flatMap(one => (one.endsWith('/') ? [one.slice(0, -1)] : []))
+    const isUntracked = (path: string) => untracked.some(dir => path === dir || path.startsWith(`${dir}/`))
+    // Whether git reports a file as changed, itself or as part of an untracked folder.
+    const isChanged = (path: string) => changed.has(path) || isUntracked(path)
     // Whether the tree shows only those files and the folders down to them ("N changed" pressed).
     const isFiltered = v.changed !== null && changed.size > 0
     // A touched file as the tree spells it, relative to the project shown; null outside it.
@@ -196,7 +202,8 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // else. The tree goes to the project's top when a file is outside the folder it shows. A deleted
     // file has no row, so opens nothing.
     const toggleChanged = async () => {
-      const paths = g?.changed ?? []
+      // An untracked folder shows closed, as one change: the folders above it open, not it.
+      const paths = (g?.changed ?? []).map(one => one.replace(/\/$/, ''))
       const next = await update($, view, old => {
         if (old.changed !== null) return unfiltered(old)
 
@@ -633,7 +640,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // The name takes Claude's color while Claude has the file, so this is what still says git has
     // the file changed.
     const mark = (path: string | null) => {
-      const letter = path === null ? undefined : g?.marks[path]
+      const letter = path === null ? undefined : (g?.marks[path] ?? (isUntracked(path) ? 'U' : undefined))
 
       return letter ? (
         <Text color={DIRTY} size="footnote" weight="semibold">
@@ -796,7 +803,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         .filter(entry => !JUNK.has(entry.name))
         .filter(entry => !SKIP.has(entry.name) || v.showHidden)
         .filter(entry => v.showHidden || !entry.name.startsWith('.'))
-        .filter(entry => !isFiltered || (entry.kind === 'dir' ? changedUnder(join(dir, entry.name)) > 0 : changed.has(join(dir, entry.name))))
+        .filter(entry => !isFiltered || isChanged(join(dir, entry.name)) || (entry.kind === 'dir' && changedUnder(join(dir, entry.name)) > 0))
         // Folders first, then names as a person reads them: `file2` before `file10`.
         .sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name, undefined, { numeric: true }))
       for (const entry of sorted) {
@@ -807,11 +814,15 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
         if (entry.kind === 'dir') {
           const isOpen = v.expanded.includes(path)
-          const count = SKIP.has(entry.name) ? 0 : changedUnder(path)
+          // A folder git names whole as untracked, or one inside it, says U, as an untracked file
+          // does; any other says how many changes are under it.
+          const isNew = isUntracked(path)
+          const count = SKIP.has(entry.name) || isNew ? 0 : changedUnder(path)
+          const isDirtyDir = isNew || count > 0
           const active = activeUnder(path)
-          const folderColor = entry.name.startsWith('.') ? MUTED : count > 0 ? EDIT : FOLDER
+          const folderColor = entry.name.startsWith('.') ? MUTED : isDirtyDir ? EDIT : FOLDER
           const name = (
-            <Text color={active ? accentOf(active) : count > 0 ? DIRTY : undefined} dimColor={!active && count === 0 && isIgnored(path, true)}>
+            <Text color={active ? accentOf(active) : isDirtyDir ? DIRTY : undefined} dimColor={!active && !isDirtyDir && isIgnored(path, true)}>
               {entry.name}
             </Text>
           )
@@ -845,9 +856,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                   </Button>
                 )}
               </Box>
-              {(active || count > 0) && (
+              {(active || isDirtyDir) && (
                 <Box flexShrink={0} gap={xs} alignItems="center">
                   {active && dot(accentOf(active), true)}
+                  {isNew && mark(path)}
                   {count > 0 && (
                     <Text color={DIRTY} size="footnote" tabular>
                       {count}
@@ -862,7 +874,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           if (isOpen && depth < 13) await walk(path, depth + 1)
         } else {
           const touch = byPath.get(path)
-          const isDirty = changed.has(path)
+          const isDirty = isChanged(path)
           const accent = touch ? accentOf(touch) : isDirty ? DIRTY : undefined
           // The row's tint: strong while Claude has the file or just committed it, faint once it let go.
           const background = touch && isRich ? tint(accentOf(touch), touch.isActive || touch.isCommitted ? '2e' : '14') : undefined
@@ -1165,7 +1177,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             // since a commit Claude did not make here (another session's, the app's, the person's)
             // leaves nothing to show; else as Claude left it.
             const key = keyOf(one.path)
-            const canDiff = g && key !== null ? changed.has(key) : one.isEdited && !one.isCommitted
+            const canDiff = g && key !== null ? isChanged(key) : one.isEdited && !one.isCommitted
             // As in the tree: the tint and shimmer say what Claude did with the file, the name takes its color.
             const background = isRich ? tint(accentOf(one), one.isActive || one.isCommitted ? '2e' : '14') : undefined
 
@@ -1260,7 +1272,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                     {opens(
                       'match',
                       join(home, path),
-                      <Text color={byPath.has(path) ? accentOf(byPath.get(path)!) : changed.has(path) ? DIRTY : undefined} wrap="truncate-start">
+                      <Text color={byPath.has(path) ? accentOf(byPath.get(path)!) : isChanged(path) ? DIRTY : undefined} wrap="truncate-start">
                         {path}
                       </Text>,
                     )}
@@ -1270,7 +1282,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 </Box>,
                 'match',
                 join(home, path),
-                changed.has(path),
+                isChanged(path),
               ),
             )}
             {!query && rootRow}

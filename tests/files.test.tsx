@@ -1084,6 +1084,61 @@ test('in a big project "N changed" draws the changed files, not every file in th
   await ui.unmount()
 })
 
+// `git status` names a folder git tracks nothing in once, `?? out/`, as it prints it by default:
+// a folder of thousands of generated files is one change, not thousands, and git lists far less.
+test('an untracked folder is one change, marked U, and so is everything in it', async ($, on) => {
+  mock.clock(on)
+  const ran: { argv: string[]; cwd?: string }[] = []
+  const tree: Record<string, ReturnType<typeof entry>[]> = {
+    '/proj': [entry('out', 'dir'), entry('src', 'dir')],
+    '/proj/out': [entry('render', 'dir'), entry('a.mp4', 'file')],
+    '/proj/out/render': [entry('frame0001.png', 'file')],
+    '/proj/src': [entry('client.js', 'file')],
+  }
+  engine(on, { dirty: [' M src/client.js', '?? out/'], ahead: '0' }, [], ran, path => tree[path] ?? [])
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await settled()
+  const row = async (key: string) =>
+    (((await ui.findAll({ type: 'Box' })) as { key?: string; text?: string }[]).find(one => one.key === `row:${key}`)?.text ?? '').replace(/\s+/g, ' ').trim()
+
+  expect(await text(ui, /^ ?2 changed ?$/)).toMatch(/2 changed/)
+  // The folder says U, as an untracked file does, not a count of what is in it.
+  expect(await row('out')).toMatch(/^out ?U$/)
+
+  await ui.press({ key: 'fold:out' })
+  await ui.press({ key: 'fold:out/render' })
+  expect(await row('out/a.mp4')).toMatch(/a\.mp4.*U/)
+  expect(await row('out/render')).toMatch(/^render ?U$/)
+  expect(await row('out/render/frame0001.png')).toMatch(/frame0001\.png.*U/)
+
+  // The pane never asks git to list every file in an untracked folder to draw this.
+  expect(ran.filter(one => one.argv.includes('status')).map(one => one.argv.filter(arg => arg.startsWith('-u')))).not.toContainEqual(['-uall'])
+  await ui.unmount()
+})
+
+test('"N changed" shows an untracked folder closed, among the changed files', async ($, on) => {
+  const tree: Record<string, ReturnType<typeof entry>[]> = {
+    '/proj': [entry('build', 'dir'), entry('src', 'dir')],
+    '/proj/build': [entry('gen', 'dir')],
+    '/proj/build/gen': [entry('a.js', 'file')],
+    '/proj/src': [entry('client.js', 'file'), entry('util.js', 'file')],
+  }
+  engine(on, { dirty: [' M src/client.js', '?? build/gen/'], ahead: '0' }, [], [], path => tree[path] ?? [])
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await settled()
+  await ui.press({ key: 'changed' })
+
+  const drawn = ((await ui.findAll({ type: 'Text' })) as { text?: string }[]).map(one => (one.text ?? '').trim()).filter(one => /^(build|gen|a\.js|src|client\.js|util\.js)$/.test(one))
+  expect(drawn).toEqual(['build', 'gen', 'src', 'client.js'])
+  // build and src open down to what changed; gen, the untracked folder, stays shut.
+  expect(await chevrons(ui)).toEqual(['open', 'closed', 'open'])
+  await ui.unmount()
+})
+
 test('a diff of several hunks reads line by line, each numbered where it is in the file', async ($, on) => {
   engine(on, { dirty: [' M src/client.js'], ahead: '0', diff: LOGGED_RETRY_AND_SLOWER_DELAY })
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })

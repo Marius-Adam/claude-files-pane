@@ -220,7 +220,9 @@ async function readGit($: EngineInterface, root: string): Promise<Git | null> {
 
   const { branch, prefix, isDetached } = where
   const [state, numstat, track, dirs, ignored] = await Promise.all([
-    run($, ['git', 'status', '--porcelain', '-z', '-uall'], 10000, at),
+    // A folder git tracks nothing in comes once, as `out/`, as `git status` prints it: a folder of
+    // thousands of generated files is one change, and git need not list them all.
+    run($, ['git', 'status', '--porcelain', '-z', '--untracked-files=normal'], 10000, at),
     run($, ['git', 'diff', '--numstat', '-z', '--relative', 'HEAD'], 10000, at),
     isDetached ? null : run($, ['git', 'for-each-ref', '--format=%(upstream)%00%(upstream:track,nobracket)', `refs/heads/${branch}`], 5000, at),
     run($, ['git', 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], 5000, at),
@@ -310,6 +312,8 @@ function pathsOfV2(fields: string[], heads: string[]) {
 export async function snapshotOf($: EngineInterface): Promise<Snapshot | null> {
   const cwd = await sessionDir($)
   const [state, dirs, stash] = await Promise.all([
+    // Every file, in an untracked folder too, so a file a command writes there counts: past
+    // SNAPSHOT_FILES the command is not looked at.
     run($, ['git', 'status', '--porcelain=v2', '--branch', '-z', '-uall'], 3000),
     // The session's folder within the repository (`sub/`, or nothing at its top), as readGit takes
     // it: a folder reached through a link has another spelling than the top git names.
@@ -348,7 +352,7 @@ async function printOf($: EngineInterface, root: string): Promise<string | null>
 
   const at = root || undefined
   const [state, numstat] = await Promise.all([
-    run($, ['git', 'status', '--porcelain=v2', '--branch', '-z', '-uall'], 10000, at),
+    run($, ['git', 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal'], 10000, at),
     run($, ['git', 'diff', '--numstat', '-z', 'HEAD'], 10000, at),
   ])
 
