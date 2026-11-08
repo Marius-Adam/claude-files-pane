@@ -4,7 +4,7 @@ import type { EngineInterface, RenderInput, Space } from 'claude-code'
 import type { Commit, Opened } from '../types'
 import { commitDiffOf, historyOf, keptDiffOf, redraw, sessionDir, textOf } from './disk'
 import { diffView } from './diffview'
-import { avatarSvg, CARD_EDGE, CLEAR, COMMIT_SVG, FOLDER, RULE_SVG, tint } from './look'
+import { avatarSvg, CARD_EDGE, CLEAR, COMMIT_SVG, FOLDER, HOVER, RULE_SVG, tint } from './look'
 import { agoOf, base, dayOf, dirOf, longDayOf, plural, rel, where } from './paths'
 import { FILE_PANE } from './state'
 
@@ -99,13 +99,16 @@ export async function renderFile($: EngineInterface, e: RenderInput<'Pane'>) {
   )
 
   // A press anywhere on a row, laid over it: a blank Button far wider than the row, which clips it,
-  // as the Files pane's `pressAnywhere` (pane.tsx) is. The desktop lights the Button under the
-  // pointer, so it is as many lines tall as the row is, or more, for the row to light whole.
+  // as the Files pane's `pressAnywhere` (pane.tsx) is. The desktop draws a Button's text on one
+  // line, whatever line breaks it holds, so a row of more lines gets a Button a line, stacked, the
+  // first keyed as the row is: one Button of three lines took a press on the row's top line alone.
   const layer = (key: string, onPress: () => unknown, lines = 1) => (
     <Box position="absolute" top={0} left={0} right={-e.props.bodyColumns} bottom={0} flexDirection="column" overflow="hidden">
-      <Button key={key} plain onPress={onPress}>
-        <Text color={CLEAR}>{Array(lines).fill('\u00a0'.repeat(Math.max(600, e.props.bodyColumns * 12))).join('\n')}</Text>
-      </Button>
+      {Array.from({ length: lines }, (_, i) => (
+        <Button key={i === 0 ? key : `${key}:${i + 1}`} plain onPress={onPress}>
+          <Text color={CLEAR}>{'\u00a0'.repeat(Math.max(600, e.props.bodyColumns * 12))}</Text>
+        </Button>
+      ))}
     </Box>
   )
 
@@ -208,6 +211,7 @@ export async function renderFile($: EngineInterface, e: RenderInput<'Pane'>) {
         paddingY={xs}
         backgroundColor={isOpen && isRich ? tint(FOLDER, '14') : undefined}
         overflow="hidden"
+        {...(canLayer ? { hover: { backgroundColor: isOpen ? tint(FOLDER, '26') : HOVER } } : {})}
       >
         <Box justifyContent="space-between" alignItems="center" gap={1}>
           <Box flexShrink={1} minWidth={0} overflow="hidden">
