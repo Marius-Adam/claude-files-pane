@@ -30,9 +30,9 @@ const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path)
 // A pane opens as a tab behind the one shown, so it asks for the keys, which raises it. Opening a
 // pane already open only retitles it, so one behind the Files pane, a tab away, would take the
 // file unseen: it is closed and opened again, in front, its state kept in `opened`.
-export async function openFile($: EngineInterface, abs: string) {
+export async function openFile($: EngineInterface, abs: string, tab?: Opened['tab']) {
   await update($, opened, old =>
-    old?.path === abs ? old : { path: abs, tab: old?.tab ?? 'file', isPreview: isMarkdown(abs), commit: null },
+    old?.path === abs ? { ...old, tab: tab ?? old.tab } : { path: abs, tab: tab ?? old?.tab ?? 'file', isPreview: isMarkdown(abs), commit: null },
   )
 
   const panes = await $.ui.panes().catch(() => [])

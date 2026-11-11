@@ -86,6 +86,14 @@ export type Opened = { path: string; tab: 'file' | 'diff' | 'history'; isPreview
 // out; or why it shows none.
 export type FileText = { text: string; more: number } | { reason: 'binary' | 'large' | 'unreadable' }
 
+// A change to a file, as the session saw it: when, the file (from the session's folder, as the
+// touched list spells it), and who made it as far as the pane can tell. `claude`: Claude's Edit or
+// Write. `command`: the file changed while a tool call other than those ran, its first line in
+// `command`; that was most likely the command, but a save of yours in those seconds counts too, so
+// it's never said to be Claude's. `outside`: it changed with no tool call of Claude's running, by
+// you or another program.
+export type Change = { at: number; path: string; by: 'claude' | 'command' | 'outside'; command: string | null }
+
 // A commit that changed a file: its short hash, author, when (milliseconds since the epoch), its
 // first line, and the file's path then, from the repository's top (it may have been renamed since).
 export type Commit = { hash: string; author: string; at: number; subject: string; path: string }
@@ -107,6 +115,9 @@ declare module 'claude-code' {
       status: Shaped<Status | null>
       tick: number
       opened: Shaped<Opened | null>
+      log: Shaped<Change[]>
+      // Whether the timeline under the touched list is open.
+      isLogShown: boolean
     }
   }
 }

@@ -123,14 +123,17 @@ export const changedBy = (before: Snapshot | null, after: Snapshot | null): stri
 
 // After a command Claude ran: the files it changed (paths from the session's folder, as the list
 // spells them) join the touched list as edited, as a file the Edit tool changes does, and an open
-// diff is read again.
-export async function afterCommand($: EngineInterface, before: Snapshot): Promise<void> {
-  const paths = changedBy(before, await snapshotOf($))
+// diff is read again. Resolves the repository as the command left it, and the files it changed.
+export async function afterCommand($: EngineInterface, before: Snapshot): Promise<{ after: Snapshot | null; paths: string[] }> {
+  const after = await snapshotOf($)
+  const paths = changedBy(before, after)
 
-  if (paths.length === 0) return
+  if (paths.length === 0) return { after, paths }
 
   await update($, touched, list => paths.reduce((all, path) => upsert(all, path, true, false), list))
   await refreshDiff($)
+
+  return { after, paths }
 }
 
 // A finished turn's files join the earlier turns', for the whole-session list: a file touched again

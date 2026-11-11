@@ -2,7 +2,13 @@
 
 Each release of Files pane, newest first. The version is the one in [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json), and each has a [GitHub release](https://github.com/Marius-Adam/claude-files-pane/releases).
 
-## [1.0.0] - Unreleased
+## [Unreleased]
+
+### Added
+
+- **A timeline of the session's changes.** Under the touched list, **Show** opens every change to a file this session, newest first, with its time and who made it: **Claude** (its Edit or Write), **Command** (the file changed while a command ran, with the command, since a save of yours in those seconds would look the same), or **Outside** (no tool call of Claude's was running: you, or another program). A press on a file opens its diff. Idea from Reddit. (#54)
+
+## [1.0.0] - 2026-11-08
 
 The pane now does more than show you files. You can open a file to see its text, diff and history, follow the branch's pull request and its checks, and see changes from your editor or terminal as they happen.
 

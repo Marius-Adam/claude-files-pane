@@ -24,3 +24,5 @@ export const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], 
 //   status   'status-1'   the commit line at the pane's foot: Status | null
 //   tick     (none)       bumped by Refresh, so the tree is listed again
 //   opened   'opened-1'   the file open in the file pane, and its tab: Opened | null
+//   log      'log-1'      the session's changes, oldest first: Change[]
+//   isLogShown (none)     whether the timeline is open: boolean

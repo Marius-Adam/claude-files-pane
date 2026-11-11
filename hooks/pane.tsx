@@ -49,15 +49,27 @@ const now = atom({ plugin: 'files-pane', key: 'now' } as const, null, { shape: '
 const pr = atom({ plugin: 'files-pane', key: 'pr' } as const, null, { shape: 'pr-2' })
 const scope = atom({ plugin: 'files-pane', key: 'scope' } as const, 'turn', { shape: 'scope-1' })
 const isTouchedAll = atom({ plugin: 'files-pane', key: 'isTouchedAll' } as const, false)
+const isLogShown = atom({ plugin: 'files-pane', key: 'isLogShown' } as const, false)
+const log = atom({ plugin: 'files-pane', key: 'log' } as const, [], { shape: 'log-1' })
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
 const tick = atom({ plugin: 'files-pane', key: 'tick' } as const, 0)
 const touched = atom({ plugin: 'files-pane', key: 'touched' } as const, [], { shape: 'touched-3' })
 const view = atom({ plugin: 'files-pane', key: 'view' } as const, DEFAULT_VIEW, { shape: 'view-4' })
 
 const TREE_ROWS = 300
+
+// Who made a change on the timeline, as its row says it: Claude's edit in its edit color; a file
+// that changed while a command ran in the tool color; one outside Claude's tool calls grey.
+const WHO = {
+  claude: { label: 'Claude', color: EDIT },
+  command: { label: 'Command', color: TOOL },
+  outside: { label: 'Outside', color: MUTED },
+} as const
 const MATCHES = 50
 // The touched list shows its newest files up to this many, and offers the rest a press away.
 const TOUCHED_ROWS = 8
+// The timeline shows this many of the session's changes, the newest.
+const LOG_ROWS = 40
 // A pull request's pill, coloured as GitHub colours where it stands.
 const PR_COLORS: Record<Pr['state'], string> = { open: DONE, draft: MUTED, merged: READ, closed: REMOVED }
 
@@ -93,6 +105,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         redraw($)
       })
     }
+    const [changes, isLogOpen] = await Promise.all([read($, log), read($, isLogShown)])
     const [cur, list, prior, sc, isAll, v, g, found, open, acts, foot] = await Promise.all([
       read($, now),
       read($, touched),
@@ -1230,6 +1243,74 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               canDiff,
             )
           })}
+        </Box>
+
+        {/* The session's changes, newest first, each with who made it as far as the pane can
+            tell, and the command a file changed during. Closed until asked for. */}
+        <Box flexDirection="column" borderStyle="round" borderColor={edge} backgroundColor={isRich ? CARD : undefined} gap={xs}>
+          {head(
+            'TIMELINE',
+            <Box gap={xs} alignItems="center">
+              {tool(
+                'timeline',
+                'Show',
+                async () => {
+                  await update($, isLogShown, old => !old)
+                  redraw($)
+                },
+                isLogOpen ? 'on' : 'off',
+              )}
+              {isRich ? pill(plural(changes.length, 'change'), MUTED) : <Text dimColor size="caption">{plural(changes.length, 'change')}</Text>}
+            </Box>,
+          )}
+          {isLogOpen && changes.length === 0 && (
+            <Box paddingX={1}>
+              <Text dimColor>No changes yet</Text>
+            </Box>
+          )}
+          {isLogOpen &&
+            changes
+              .slice(-LOG_ROWS)
+              .reverse()
+              .map(one => {
+                const abs = absOf(cwd, one.path)
+                const who = WHO[one.by]
+
+                return (
+                  <Box key={`change:${one.at}:${one.path}`} flexDirection="column" paddingX={1} overflow="hidden">
+                    <Box gap={1} alignItems="center" overflow="hidden">
+                      <Text dimColor size="footnote" tabular>
+                        {timeOf(one.at)}
+                      </Text>
+                      <Box flexShrink={0}>{isRich ? pill(who.label, who.color) : <Text color={who.color} size="caption">{who.label}</Text>}</Box>
+                      <Box flexShrink={1} minWidth={0}>
+                        <Button key={`change:${one.at}:${one.path}`} plain onPress={() => openFile($, abs, 'diff')}>
+                          <Text weight="semibold" wrap="truncate-end">
+                            {base(one.path)}
+                          </Text>
+                        </Button>
+                      </Box>
+                      <Box flexShrink={8} minWidth={0}>
+                        <Text dimColor size="footnote" wrap="truncate-start">
+                          {where(dirOf(one.path))}
+                        </Text>
+                      </Box>
+                    </Box>
+                    {one.command !== null && (
+                      <Text dimColor size="footnote" wrap="truncate-end">
+                        {`during ${one.command}`}
+                      </Text>
+                    )}
+                  </Box>
+                )
+              })}
+          {isLogOpen && changes.length > 0 && (
+            <Box paddingX={1}>
+              <Text dimColor size="footnote">
+                Command: changed while it ran, most likely by it. Outside: you or another program.
+              </Text>
+            </Box>
+          )}
         </Box>
 
         <Box flexDirection="column" borderStyle="round" borderColor={edge} backgroundColor={isRich ? CARD : undefined} gap={0}>
