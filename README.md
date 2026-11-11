@@ -50,12 +50,10 @@
 
 <img src="docs/demo.gif" alt="The Files pane in the Claude desktop app as Claude fixes a discount bug: its edit and a sed that renames a function turn five files orange, then green once committed; after it pushes and opens a pull request, the branch row shows the PR with its checks running, then passing. A Markdown file opens as a preview beside the pane, a commit in a file's History shows what it changed, and a line added from a terminal marks the file changed within seconds, its Diff a press away" width="880">
 
-### New in 1.0
+### New in 1.1
 
-- **Open any file** beside the chat, with its text, its diff and every commit that changed it
-- **Your pull request** in the branch row, with its checks and review
-- **Your own changes**, made in an editor or a terminal, show within seconds
-- **A `sed`, a script or a formatter** Claude runs counts as an edit
+- **Pictures** open as themselves: SVG, PNG, JPEG, GIF and WebP, and a Markdown preview draws its pictures in place
+- **Timeline** of every change to a file this session, and who made it: Claude, a command it ran, or you
 
 Everything that changed is in the [changelog](CHANGELOG.md).
 
