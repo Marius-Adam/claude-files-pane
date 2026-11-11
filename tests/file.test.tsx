@@ -58,10 +58,14 @@ const engine = (on: Parameters<TestBody>[1], disk: Disk = DISK, diff = DIFF) => 
   })
   on('fs.list', (_, e) => {
     const path = asked((e as { path?: string }).path ?? '')
+    const under = (dir: string) =>
+      Object.keys(disk)
+        .filter(one => one.slice(0, one.lastIndexOf('/')) === dir)
+        .map(one => entry(one.slice(dir.length + 1), 'file', disk[one]!.length))
 
-    if (path === '/proj/src') return { value: [entry('client.js', 'file', disk[CLIENT]!.length)] }
+    if (path === '/proj/src') return { value: under('/proj/src') }
 
-    return { value: [entry('src', 'dir'), entry('README.md', 'file', disk['/proj/README.md']!.length)] }
+    return { value: [entry('src', 'dir'), ...under('/proj')] }
   })
   on('fs.stat', (_, e) => {
     const text = disk[asked((e as { path: string }).path)]
@@ -70,12 +74,14 @@ const engine = (on: Parameters<TestBody>[1], disk: Disk = DISK, diff = DIFF) => 
 
     return { value: { kind: 'file', size: text.length, mtimeMs: 0, isLink: false } }
   })
+  // A file asked for as bytes comes as base64: its text holds them one character a byte.
   on('fs.read', (_, e) => {
-    const text = disk[asked((e as { path: string }).path)]
+    const { path, as } = e as { path: string; as?: string }
+    const text = disk[asked(path)]
 
     if (text === undefined) throw new Error('ENOENT')
 
-    return { value: text }
+    return { value: as === 'bytes' ? { base64: btoa(text) } : text }
   })
   on('process.run', (_, e) => {
     const { argv, init } = e as { argv: string[]; init?: { cwd?: string } }
@@ -440,5 +446,118 @@ test('on the desktop a file row’s ⋯ floats over the press that opens the fil
 
   await files.press({ key: `more:tree:${CLIENT}` })
   expect(((await files.findAll({ type: 'Text', text: /^@ Mention$/ })) as unknown as unknown[]).length).toBe(1)
+  await files.unmount()
+})
+
+// Pictures, one character a byte: a PNG 2 pixels wide and 1 tall, and a JPEG 1280 by 720, each its
+// header and a little after it.
+const PNG = '\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x02\0\0\0\x01\x08\x06\0\0\0\x1f\x15\xc4\x89'
+const JPEG = '\xff\xd8\xff\xe0\0\x10JFIF\0\x01\x01\0\0\x01\0\x01\0\0\xff\xc0\0\x11\x08\x02\xd0\x05\0\x03\x01\x22\0\x02\x11\x01\x03\x11\x01'
+// A PNG 800 by 400, as a screenshot would be.
+const WIDE_PNG = PNG.replace('\0\0\0\x02\0\0\0\x01', '\0\0\x03\x20\0\0\x01\x90')
+const SVG = '<?xml version="1.0"?>\n<!-- a dot -->\n<svg viewBox="0 0 2 2"><circle r="1"/></svg>\n'
+
+const svgs = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) => ((await ui.findAll({ type: 'Svg' })) as Node[]).map(one => String(one.props.source))
+
+test('a picture opens as its preview: SVG as itself, a raster picture inside one, with its type, size and weight', async ($, on) => {
+  engine(on, { ...DISK, '/proj/logo.svg': SVG, '/proj/shot.png': PNG })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await files.press({ key: 'open-row:tree:/proj/logo.svg' })
+
+  const file = await $.ui.mount({ ...FILE_PANE, surface: 'desktop' })
+
+  // From its <svg on, with the namespace a picture drawn as an image needs; its markup a press away.
+  expect((await svgs(file)).filter(one => one.includes('circle'))).toEqual(['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><circle r="1"/></svg>'])
+  await file.press({ key: 'preview' })
+  expect((await codes(file)).map(one => one.props.source)).toEqual([SVG.trimEnd()])
+  await file.press({ key: 'preview' })
+
+  await files.press({ key: 'open-row:tree:/proj/shot.png' })
+  expect((await svgs(file)).filter(one => one.includes('data:image'))).toEqual([
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 1" width="2" height="1"><image width="2" height="1" href="data:image/png;base64,${btoa(PNG)}"/></svg>`,
+  ])
+  expect(await reading(file)).toMatch(/PNG · 2 × 1 · 33 B/)
+  expect(await codes(file)).toEqual([])
+  // A raster picture has no source to switch to.
+  expect(await file.find({ key: 'preview' })).toBeUndefined()
+  await file.unmount()
+  await files.unmount()
+})
+
+test('on the terminal a PNG draws as its pixels, in the pane’s width and its own shape; other pictures say what they are', async ($, on) => {
+  engine(on, { ...DISK, '/proj/shot.png': WIDE_PNG, '/proj/photo.jpg': JPEG, '/proj/logo.svg': SVG })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+
+  const files = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await files.press({ key: 'open-row:tree:/proj/shot.png' })
+
+  const file = await $.ui.mount({ ...FILE_PANE, surface: 'terminal' })
+  const [image] = (await file.findAll({ type: 'Image' })) as Node[]
+
+  // Twice as wide as it is tall: as wide as the pane, a quarter as many rows, as a cell is twice as tall.
+  expect(image?.props).toEqual(expect.objectContaining({ source: { file: '/proj/shot.png', format: 'png', generation: 0 }, columns: 46, rows: 12, alt: 'shot.png' }))
+  expect(await reading(file)).toMatch(/PNG · 800 × 400 · 33 B/)
+
+  await files.press({ key: 'open-row:tree:/proj/photo.jpg' })
+  expect(await file.findAll({ type: 'Image' })).toEqual([])
+  expect(await reading(file)).toMatch(/JPEG · 1280 × 720 · \d+ B\. The terminal previews PNG pictures only\./)
+
+  // The terminal draws no SVG: an SVG shows its markup, with nothing to switch.
+  await files.press({ key: 'open-row:tree:/proj/logo.svg' })
+  expect((await codes(file)).map(one => one.props.source)).toEqual([SVG.trimEnd()])
+  expect(await file.find({ key: 'preview' })).toBeUndefined()
+  await file.unmount()
+  await files.unmount()
+})
+
+test('a raster picture past what an SVG holds is described instead of drawn', async ($, on) => {
+  engine(on, { ...DISK, '/proj/big.png': PNG + 'x'.repeat(100000) })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await files.press({ key: 'open-row:tree:/proj/big.png' })
+
+  const file = await $.ui.mount({ ...FILE_PANE, surface: 'desktop' })
+
+  expect((await svgs(file)).filter(one => one.includes('data:image'))).toEqual([])
+  expect(await reading(file)).toMatch(/PNG · 2 × 1 · 97\.7 KB\. Too large to preview here\./)
+  await file.unmount()
+  await files.unmount()
+})
+
+test('a Markdown preview draws the pictures on lines of their own in their place, from the file’s folder', async ($, on) => {
+  const readme = [
+    '# Proj',
+    '',
+    '![The logo](docs/logo.svg)',
+    '',
+    'Some text.',
+    '',
+    '![shot](./shot.png "a shot")',
+    '',
+    '![remote](https://example.com/a.png)',
+    '',
+    '```md',
+    '![in a fence](docs/logo.svg)',
+    '```',
+  ].join('\n')
+  engine(on, { ...DISK, '/proj/README.md': readme, '/proj/docs/logo.svg': SVG, '/proj/shot.png': PNG })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+
+  const files = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await files.press({ key: 'open-row:tree:/proj/README.md' })
+
+  const file = await $.ui.mount({ ...FILE_PANE, surface: 'desktop' })
+  const markdown = ((await file.findAll({ type: 'Markdown' })) as Node[]).map(one => one.props.text)
+
+  expect(markdown).toEqual(['# Proj\n', '\nSome text.\n', '\n![remote](https://example.com/a.png)\n\n```md\n![in a fence](docs/logo.svg)\n```'])
+  expect((await svgs(file)).filter(one => one.includes('circle') || one.includes('data:image'))).toEqual([
+    expect.stringContaining('<circle r="1"/>'),
+    expect.stringContaining('data:image/png;base64,'),
+  ])
+  expect(((await file.findAll({ type: 'Svg' })) as Node[]).map(one => one.props.alt)).toEqual(expect.arrayContaining(['The logo', 'shot']))
+  await file.unmount()
   await files.unmount()
 })

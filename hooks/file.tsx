@@ -1,11 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, RenderInput, Space } from 'claude-code'
 
-import type { Commit, Opened } from '../types'
-import { commitDiffOf, historyOf, keptDiffOf, redraw, sessionDir, textOf } from './disk'
+import type { Commit, Opened, Picture } from '../types'
+import { commitDiffOf, historyOf, keptDiffOf, pictureOf, redraw, sessionDir, textOf } from './disk'
 import { diffView } from './diffview'
 import { avatarSvg, CARD_EDGE, CLEAR, COMMIT_SVG, FOLDER, HOVER, RULE_SVG, tint } from './look'
-import { agoOf, base, dayOf, dirOf, longDayOf, plural, rel, where } from './paths'
+import { isPicture, isSvg, piecesOf, wrapped } from './media'
+import { agoOf, base, dayOf, dirOf, longDayOf, plural, rel, sizeOf, where } from './paths'
 import { FILE_PANE } from './state'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
@@ -13,7 +14,8 @@ import { FILE_PANE } from './state'
 const opened = atom({ plugin: 'files-pane', key: 'opened' } as const, null, { shape: 'opened-1' })
 
 // The file pane: a file opened from the Files pane, in a pane of its own beside it, with three tabs
-// at its top: the file itself (Markdown also as a preview), what changed in it since the last
+// at its top: the file itself (Markdown and pictures also as a preview, a Markdown file's pictures
+// drawn in it), what changed in it since the last
 // commit, and the commits that changed it, each opening what it changed. Drawn by register.tsx's
 // `ui.render` hook for FILE_PANE.
 
@@ -25,14 +27,17 @@ const TABS: { tab: Opened['tab']; label: string }[] = [
 
 const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path)
 
+// How many rows tall the terminal draws a picture at most.
+const IMAGE_ROWS = 24
+
 // Opens `abs` in the file pane, or brings the pane up on it. Another file takes its place, on the
-// same tab; a Markdown file opens as its preview.
+// same tab; a Markdown file or a picture opens as its preview.
 // A pane opens as a tab behind the one shown, so it asks for the keys, which raises it. Opening a
 // pane already open only retitles it, so one behind the Files pane, a tab away, would take the
 // file unseen: it is closed and opened again, in front, its state kept in `opened`.
 export async function openFile($: EngineInterface, abs: string) {
   await update($, opened, old =>
-    old?.path === abs ? old : { path: abs, tab: old?.tab ?? 'file', isPreview: isMarkdown(abs), commit: null },
+    old?.path === abs ? old : { path: abs, tab: old?.tab ?? 'file', isPreview: isMarkdown(abs) || isPicture(abs), commit: null },
   )
 
   const panes = await $.ui.panes().catch(() => [])
@@ -47,6 +52,8 @@ export async function renderFile($: EngineInterface, e: RenderInput<'Pane'>) {
   const isRich = e.surface !== 'terminal'
   // The terminal's table answers `in` for Svg too, but draws none: ask the surface.
   const Svg = isRich && 'Svg' in elements ? elements.Svg : null
+  // Every table answers `in` for Image, and only the terminal's draws one.
+  const Image = e.surface === 'terminal' && 'Image' in elements ? elements.Image : null
   // Where a press can lie over a whole row, and the small step: as the Files pane has them (pane.tsx).
   const canLayer = isRich && e.surface !== 'vscode'
   const xs: Space = e.surface === 'vscode' ? 0.5 : 'xs'
@@ -120,6 +127,10 @@ export async function renderFile($: EngineInterface, e: RenderInput<'Pane'>) {
 
   const body = await (async () => {
     if (tab === 'file') {
+      // A raster picture has no text to show; an SVG shows its markup a press away, and on the
+      // terminal, which draws no SVG, only that.
+      if (isPicture(path) && (isSvg(path) ? open.isPreview && Svg : true)) return picture(path, await pictureOf($, path), 'picture')
+
       const found = await textOf($, path)
 
       if ('reason' in found) {
@@ -127,7 +138,7 @@ export async function renderFile($: EngineInterface, e: RenderInput<'Pane'>) {
           found.reason === 'binary' ? 'A binary file: nothing to show as text.' : found.reason === 'large' ? 'Too large to show here.' : 'This file can’t be read.',
         )
       }
-      if (open.isPreview && isMarkdown(path)) return <Markdown key={`md:${path}`} text={found.text} />
+      if (open.isPreview && isMarkdown(path)) return markdown(found.text)
 
       return (
         <Box flexDirection="column" gap={1}>
@@ -192,6 +203,75 @@ export async function renderFile($: EngineInterface, e: RenderInput<'Pane'>) {
       </Box>
     )
   })()
+
+  // A picture, as each surface draws one: an SVG as its markup where SVG draws; a PNG on the
+  // terminal as its pixels; another raster picture as an SVG holding it, where it fits in one;
+  // and under it, its type, size and weight. Where none of that draws, what it is, in words.
+  function picture(abs: string, found: Picture, key: string, alt = base(abs)) {
+    if ('reason' in found) return note(found.reason === 'large' ? 'Too large to preview here.' : 'This picture can’t be read.')
+
+    if (found.kind === 'svg') return Svg ? <Svg key={`${key}:${abs}`} source={found.markup} alt={alt} /> : note(`${alt}: an SVG, which the terminal draws no preview of.`)
+
+    const { type, width, height, bytes } = found
+    const about = `${type.toUpperCase()} · ${width && height ? `${width} × ${height} · ` : ''}${sizeOf(bytes)}`
+
+    if (Image && type === 'png' && width && height) {
+      // A cell is about twice as tall as it is wide and some 8 pixels across: the picture keeps its
+      // shape within the pane's width and IMAGE_ROWS rows, and a small one is not blown up.
+      let columns = Math.max(1, Math.min(255, e.props.bodyColumns - 2, Math.ceil(width / 8)))
+      let rows = Math.round((columns * height) / width / 2)
+
+      if (rows > IMAGE_ROWS) {
+        rows = IMAGE_ROWS
+        columns = Math.max(1, Math.min(columns, Math.round((rows * 2 * width) / height)))
+      }
+
+      return (
+        <Box key={`${key}:${abs}`} flexDirection="column" gap={xs}>
+          <Image source={{ file: abs, format: 'png', generation: Math.floor(found.mtimeMs) }} columns={columns} rows={Math.max(1, rows)} alt={alt} />
+          {note(about)}
+        </Box>
+      )
+    }
+
+    const markup = Svg ? wrapped(found) : null
+
+    if (!Svg || !markup) {
+      return note(`${about}. ${Svg ? 'Too large to preview here.' : Image ? 'The terminal previews PNG pictures only.' : 'No preview here.'}`)
+    }
+
+    return (
+      <Box key={`${key}:${abs}`} flexDirection="column" gap={xs}>
+        <Svg source={markup} alt={alt} />
+        {note(about)}
+      </Box>
+    )
+  }
+
+  // A Markdown file's preview: its text, and each picture on a line of its own drawn in its place.
+  async function markdown(text: string) {
+    const pieces = piecesOf(text, dirOf(path), cwd || dirOf(path))
+
+    if (pieces.every(one => 'text' in one)) return <Markdown key={`md:${path}`} text={text} />
+
+    const drawn = await Promise.all(
+      pieces.map(async (one, i) =>
+        'text' in one ? (
+          <Markdown key={`md:${path}:${i}`} text={one.text} />
+        ) : (
+          <Box key={`md-picture:${i}`} flexDirection="column">
+            {picture(one.path, await pictureOf($, one.path), `md-picture:${i}`, one.alt || base(one.path))}
+          </Box>
+        ),
+      ),
+    )
+
+    return (
+      <Box key={`md:${path}`} flexDirection="column" gap={1}>
+        {drawn}
+      </Box>
+    )
+  }
 
   // A commit in the history, as GitHub lists one: its first line and its hash, then who made it
   // and how long ago. A press anywhere on it opens what it changed in the file, or closes it.
@@ -262,7 +342,7 @@ export async function renderFile($: EngineInterface, e: RenderInput<'Pane'>) {
       </Box>
       <Box gap={1} flexWrap="wrap" alignItems="center">
         {TABS.map(one => chip(`tab:${one.tab}`, one.label, tab === one.tab, () => set({ tab: one.tab })))}
-        {tab === 'file' && isMarkdown(path) && (
+        {tab === 'file' && (isMarkdown(path) || (isSvg(path) && Svg)) && (
           <Box marginLeft={1}>{chip('preview', open.isPreview ? 'Source' : 'Preview', false, () => set({ isPreview: !open.isPreview }))}</Box>
         )}
       </Box>
