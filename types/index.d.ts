@@ -86,6 +86,14 @@ export type Opened = { path: string; tab: 'file' | 'diff' | 'history'; isPreview
 // out; or why it shows none.
 export type FileText = { text: string; more: number } | { reason: 'binary' | 'large' | 'unreadable' }
 
+// A change to a file, as the session saw it: when, the file (from the session's folder, as the
+// touched list spells it), and who made it as far as the pane can tell. `claude`: Claude's Edit or
+// Write. `command`: the file changed while a tool call other than those ran, its first line in
+// `command`; that was most likely the command, but a save of yours in those seconds counts too, so
+// it's never said to be Claude's. `outside`: it changed with no tool call of Claude's running, by
+// you or another program.
+export type Change = { at: number; path: string; by: 'claude' | 'command' | 'outside'; command: string | null }
+
 // A picture as the file pane previews it: an SVG's markup, from its `<svg` on; or a PNG, JPEG,
 // GIF or WebP, its type, its pixels' width and height (0 where the header gave none), its size on
 // the disk and when it last changed, and its bytes in base64 unless past what a preview draws.
@@ -116,6 +124,9 @@ declare module 'claude-code' {
       status: Shaped<Status | null>
       tick: number
       opened: Shaped<Opened | null>
+      log: Shaped<Change[]>
+      // Whether the timeline under the touched list is open.
+      isLogShown: boolean
     }
   }
 }

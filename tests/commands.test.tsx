@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 const PANE = {
@@ -229,5 +229,83 @@ test('a stash, a pop and a pull count none of the files they rewrite', async ($,
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
 
   expect(await touchedOf(ui)).toEqual([])
+  await ui.unmount()
+})
+
+// Every text the pane draws, in order, as a person reads it.
+const reading = async (ui: { findAll: (q: { type: string }) => Promise<unknown> }) =>
+  ((await ui.findAll({ type: 'Text' })) as { text?: string }[])
+    .map(one => (one.text ?? '').replace(/\u00a0/g, ' ').trim())
+    .filter(Boolean)
+    .join(' ')
+
+test('the timeline says who changed each file, newest first: Claude’s edit, a command, or something outside Claude', async ($, on) => {
+  const clock = mock.clock(on)
+  const edited = CHANGED.replace('src/client.js', 'CHANGES.md')
+  const git = world({
+    commands: {
+      // The Edit tool, which runs no command.
+      '': one => {
+        write('CHANGES.md')(one)
+        one.entries = [...one.entries.filter(field => field !== edited), edited]
+      },
+      "sed -i '' 's/retry = 2/retry = 3/' src/client.js": one => {
+        write('src/client.js')(one)
+        one.entries = [...one.entries, CHANGED]
+      },
+    },
+  })
+  engine(on, git)
+  // Set up as a session is: /files registered, the pane in sight, and its looks at the disk running.
+  on('command.register', () => ({ value: { command: 'files' } }))
+  on('ui.panes', () => ({ value: [{ id: 'files-pane', title: 'Files: proj', isShown: true, isFocused: false, isPlaced: true }] }))
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await clock.advance(3000)
+  await clock.settle()
+
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/CHANGES.md', old_string: 'a', new_string: 'b' } as never)
+  await $.tool.call(bash("sed -i '' 's/retry = 2/retry = 3/' src/client.js"))
+
+  // Saved in an editor, with no tool call running.
+  write('notes file.md')(git)
+  git.entries = [...git.entries, UNTRACKED]
+  await clock.advance(5000)
+  await clock.settle()
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  // Closed until asked for, with how many changes it holds.
+  expect(await reading(ui)).toMatch(/TIMELINE Show 3 changes/)
+  await ui.press({ key: 'timeline' })
+  expect(await reading(ui)).toMatch(
+    /TIMELINE ✓ Show 3 changes \d\d:\d\d Outside notes file\.md \d\d:\d\d Command client\.js src during sed -i '' 's\/retry = 2\/retry = 3\/' src\/client\.js \d\d:\d\d Claude CHANGES\.md Command: changed while it ran, most likely by it\. Outside: you or another program\./,
+  )
+
+  // Claude's own edits never come back as changes made outside it.
+  await clock.advance(5000)
+  await clock.settle()
+  expect(await reading(ui)).toMatch(/TIMELINE ✓ Show 3 changes/)
+  await ui.unmount()
+})
+
+test('an edit Claude makes again counts each time; a command that changes nothing adds nothing', async ($, on) => {
+  const edited = CHANGED.replace('src/client.js', 'CHANGES.md')
+  const git = world({
+    commands: {
+      '': one => {
+        write('CHANGES.md')(one)
+        one.entries = [...one.entries.filter(field => field !== edited), edited]
+      },
+    },
+  })
+  engine(on, git)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/CHANGES.md', old_string: 'a', new_string: 'b' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/CHANGES.md', old_string: 'b', new_string: 'c' } as never)
+  await $.tool.call(bash('npm test'))
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'timeline' })
+  expect(await reading(ui)).toMatch(/TIMELINE .*2 changes \d\d:\d\d Claude CHANGES\.md \d\d:\d\d Claude CHANGES\.md/)
   await ui.unmount()
 })

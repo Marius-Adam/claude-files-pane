@@ -310,12 +310,15 @@ function pathsOfV2(fields: string[], heads: string[]) {
 // The session's repository as a command may leave it (Snapshot), read in the session's folder
 // only. Null where git did not answer in time, or reports more than SNAPSHOT_FILES changed: the
 // command is then not looked at. Bounded to a few seconds, as it stands before Claude's command.
-export async function snapshotOf($: EngineInterface): Promise<Snapshot | null> {
+// `isEveryFile` false names a folder git tracks nothing in once, as `dir/`, as `git status` does:
+// the timeline's looks, which run with no command to look at, take that, as listing every file in
+// such a folder is slow in a large one.
+export async function snapshotOf($: EngineInterface, isEveryFile = true): Promise<Snapshot | null> {
   const cwd = await sessionDir($)
   const [state, dirs, stash] = await Promise.all([
     // Every file, in an untracked folder too, so a file a command writes there counts: past
     // SNAPSHOT_FILES the command is not looked at.
-    run($, ['git', 'status', '--porcelain=v2', '--branch', '-z', '-uall'], 3000),
+    run($, ['git', 'status', '--porcelain=v2', '--branch', '-z', isEveryFile ? '-uall' : '--untracked-files=normal'], 3000),
     // The session's folder within the repository (`sub/`, or nothing at its top), as readGit takes
     // it: a folder reached through a link has another spelling than the top git names.
     run($, ['git', 'rev-parse', '--absolute-git-dir', '--show-prefix'], 3000),
@@ -725,6 +728,12 @@ let gitSeen: { root: string; print: string } | null = null
 // changed.
 let fileSeen: { path: string; stamp: string } | null = null
 
+// How many looks found the disk or git moved, or the pane back in sight: the timeline looks for
+// changes made outside Claude when this goes up.
+let moves = 0
+
+export const movesOf = () => moves
+
 export function lookForChanges($: EngineInterface) {
   if (isLooking) return
 
@@ -801,6 +810,7 @@ async function lookAgain($: EngineInterface): Promise<number> {
 
   fileSeen = file
   if (isFileMoved || isGitMoved || isBack) readings.clear()
+  if (isRenamed || isResized || isFileMoved || isGitMoved || isBack) moves++
 
   if (isRenamed || isGitMoved || isBack) void refreshGit($)
   else if (isResized || isFileMoved) redraw($)
