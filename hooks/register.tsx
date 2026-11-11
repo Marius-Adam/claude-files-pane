@@ -23,8 +23,9 @@ import { forget, headOf, lookForChanges, redraw, refreshGit, sessionDir, snapsho
 import { hostOf } from './editors'
 import { renderFile } from './file'
 import { renderPane } from './pane'
-import { base, rel, tailOf } from './paths'
+import { base, clip, firstLine, rel, tailOf } from './paths'
 import { FILE_PANE, PANE } from './state'
+import { afterTool, claudeEnds, claudeStarts, claudeWrote, isReadOnly, record, startBaseline, watchOutside } from './timeline'
 
 // The values this file reads or writes. The engine's scan wants each made by `atom` in the file that
 // uses it, so every file names its own; state.ts lists the tags they must all share.
@@ -54,6 +55,9 @@ const setUp = async ($: EngineInterface) => {
   await $.command.register({ name: 'files', description: 'Show the Files pane: what Claude reads and edits, and the project tree' })
   void openPane($).catch(() => {})
   void refreshGit($)
+  // The timeline's baseline first, so the poll's first change is measured against how things were.
+  void startBaseline($)
+  watchOutside($)
   lookForChanges($)
   // Ahead of the first ⋯, so its menu opens with the editors already found.
   void hostOf($)
@@ -74,6 +78,9 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
+    // While a tool call of Claude's runs, the timeline counts no change as made outside Claude.
+    claudeStarts()
+
     // The pane's bookkeeping never stands between Claude and its tool: a failure here is dropped.
     const cwd = await sessionDir($).catch(() => '')
     const repo = commitDir(e, cwd)
@@ -88,6 +95,8 @@ export const register: Register = on => {
         return await next(e)
       } finally {
         await afterCommit($, cwd, repo, before).catch(() => {})
+        // A commit moves HEAD: the timeline's next look starts its baseline afresh.
+        claudeEnds()
         // `git commit && git push`: the push may have opened or moved the pull request.
         if (changesPr(e)) void refreshGit($, true)
       }
@@ -103,7 +112,17 @@ export const register: Register = on => {
       try {
         return await next(e)
       } finally {
-        if (before) await afterCommand($, before).catch(() => {})
+        // The files a command changed go on the timeline as changed during it; another tool that
+        // may write is looked at the same way, against the timeline's baseline.
+        if (before) {
+          const found = await afterCommand($, before).catch(() => null)
+          const command = clip(firstLine(String((e as unknown as Record<string, unknown>).command ?? '')), 120) || e.tool
+
+          await record($, (found?.paths ?? []).map(path => ({ at: Date.now(), path, by: 'command' as const, command }))).catch(() => {})
+          await claudeWrote($, found ? found.paths : null)
+        } else if (e.tool === 'Bash') await claudeWrote($, null)
+        else if (!isReadOnly(e.tool)) await claudeWrote($, await afterTool($, e.tool).catch(() => null))
+        else claudeEnds()
         await endWork($, id).catch(() => {})
         // A command may have made, moved or removed files: the tree lists its folders again, and
         // git, which only a command can change, is read again, with the pull request when the
@@ -122,8 +141,15 @@ export const register: Register = on => {
     redraw($)
     if (shown) void reveal($, shown)
 
+    // Whether the edit went through: a refused or failed one goes on no timeline.
+    let isDone = false
+
     try {
-      return await next(e)
+      const result = await next(e)
+
+      isDone = !result.deny && !result.isError
+
+      return result
     } finally {
       const list = await update($, touched, old => old.map(one => (one.path === path ? { ...one, isActive: false } : one))).catch(() => null)
 
@@ -134,7 +160,9 @@ export const register: Register = on => {
         forget()
         void refreshGit($)
         void refreshDiff($, abs).catch(() => {})
-      }
+        if (isDone) await record($, [{ at: Date.now(), path, by: 'claude', command: null }]).catch(() => {})
+        await claudeWrote($, [path])
+      } else claudeEnds()
     }
   })
 

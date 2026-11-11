@@ -2,7 +2,21 @@
 
 Each release of Files pane, newest first. The version is the one in [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json), and each has a [GitHub release](https://github.com/Marius-Adam/claude-files-pane/releases).
 
-## [1.0.0] - Unreleased
+## [1.1.0] - 2026-11-11
+
+Pictures now open as pictures, and a timeline shows every change to a file this session and who made it.
+
+### Added
+
+- **Pictures open as a preview.** An SVG draws as itself, with its markup one press away. A PNG, JPEG, GIF or WebP draws in the desktop app and VS Code when it's under about 95 KB, and a PNG of any size draws in terminals that show pictures (kitty, Ghostty, iTerm2 3.5 and later). Under each picture: its type, size in pixels and weight. A picture that can't draw says what it is instead of "A binary file". (#53)
+- **A Markdown preview shows its pictures.** A picture on a line of its own, from a path on the disk, draws in its place, found from the file's folder (or the project's, for a path from `/`). (#53)
+- **A timeline of the session's changes.** Under the touched list, **Show** opens every change to a file this session, newest first, with its time and who made it: **Claude** (its Edit or Write), **Command** (the file changed while a command ran, with the command, since a save of yours in those seconds would look the same), or **Outside** (no tool call of Claude's was running: you, or another program). A press on a file opens its diff. Idea from Reddit. (#54)
+
+### Security
+
+[SECURITY.md](SECURITY.md#what-the-pane-runs) lists the timeline's git reads: the same `status`, `rev-parse` and `for-each-ref` the pane already ran around Claude's commands, now also as the session starts and after each Edit or Write. Pictures need no new command: the pane only reads the file.
+
+## [1.0.0] - 2026-11-08
 
 The pane now does more than show you files. You can open a file to see its text, diff and history, follow the branch's pull request and its checks, and see changes from your editor or terminal as they happen.
 
@@ -51,5 +65,6 @@ The pane now does more than show you files. You can open a file to see its text,
 
 Versions 0.5.0 to 0.8.2 (30 October to 1 November 2026) were released without notes. Their history is in the [commit log](https://github.com/Marius-Adam/claude-files-pane/commits/main).
 
-[1.0.0]: https://github.com/Marius-Adam/claude-files-pane/compare/v0.9.0...release/1.0.0
+[1.1.0]: https://github.com/Marius-Adam/claude-files-pane/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/Marius-Adam/claude-files-pane/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/Marius-Adam/claude-files-pane/releases/tag/v0.9.0

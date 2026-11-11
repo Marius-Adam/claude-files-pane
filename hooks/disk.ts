@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { Commit, FileText, Git, Mark, Op, Pr } from '../types'
+import type { Commit, FileText, Git, Mark, Op, Picture, Pr } from '../types'
+import { bytesOf, headerOf, isSvg, markupOf, PICTURE_BYTES, SVG_CHARS } from './media'
 import { base, dirOf, join, listPath, slashed, unfiltered } from './paths'
 import { DEFAULT_VIEW } from './state'
 
@@ -309,12 +310,15 @@ function pathsOfV2(fields: string[], heads: string[]) {
 // The session's repository as a command may leave it (Snapshot), read in the session's folder
 // only. Null where git did not answer in time, or reports more than SNAPSHOT_FILES changed: the
 // command is then not looked at. Bounded to a few seconds, as it stands before Claude's command.
-export async function snapshotOf($: EngineInterface): Promise<Snapshot | null> {
+// `isEveryFile` false names a folder git tracks nothing in once, as `dir/`, as `git status` does:
+// the timeline's looks, which run with no command to look at, take that, as listing every file in
+// such a folder is slow in a large one.
+export async function snapshotOf($: EngineInterface, isEveryFile = true): Promise<Snapshot | null> {
   const cwd = await sessionDir($)
   const [state, dirs, stash] = await Promise.all([
     // Every file, in an untracked folder too, so a file a command writes there counts: past
     // SNAPSHOT_FILES the command is not looked at.
-    run($, ['git', 'status', '--porcelain=v2', '--branch', '-z', '-uall'], 3000),
+    run($, ['git', 'status', '--porcelain=v2', '--branch', '-z', isEveryFile ? '-uall' : '--untracked-files=normal'], 3000),
     // The session's folder within the repository (`sub/`, or nothing at its top), as readGit takes
     // it: a folder reached through a link has another spelling than the top git names.
     run($, ['git', 'rev-parse', '--absolute-git-dir', '--show-prefix'], 3000),
@@ -620,6 +624,39 @@ export function textOf($: EngineInterface, abs: string): Promise<FileText> {
   })
 }
 
+// A picture as the file pane previews it: an SVG's markup, or a raster picture's type and size
+// from its header, with its bytes when they fit in what an Svg element takes. A picture's header
+// is read from its first HEADER_CHARS characters of base64, past most cameras' metadata.
+const HEADER_CHARS = 512 * 1024
+
+export function pictureOf($: EngineInterface, abs: string): Promise<Picture> {
+  return kept(`picture\0${abs}`, async (): Promise<Picture> => {
+    const stat = await $.fs.stat(abs).catch(() => null)
+
+    if (!stat || stat.kind !== 'file') return { reason: 'unreadable' }
+
+    if (isSvg(abs)) {
+      if (stat.size > SVG_CHARS * 4) return { reason: 'large' }
+
+      const markup = markupOf((await $.fs.read(abs).catch(() => null)) ?? '')
+
+      if (markup === null) return { reason: 'unreadable' }
+      if (markup.length > SVG_CHARS) return { reason: 'large' }
+
+      return { kind: 'svg', markup }
+    }
+
+    if (stat.size > PICTURE_BYTES) return { reason: 'large' }
+
+    const read = await $.fs.read(abs, { as: 'bytes' }).catch(() => null)
+    const header = read ? headerOf(bytesOf(read.base64, HEADER_CHARS)) : null
+
+    if (!read || !header) return { reason: 'unreadable' }
+
+    return { kind: 'raster', ...header, bytes: stat.size, mtimeMs: stat.mtimeMs, base64: read.base64.length < SVG_CHARS ? read.base64 : null }
+  })
+}
+
 // The file pane's diffs: as the ⋯'s, with room for more lines, within what a drawing draws.
 const PANE_DIFF = { lines: 2000, chars: FILE_CHARS }
 
@@ -690,6 +727,12 @@ let gitSeen: { root: string; print: string } | null = null
 // The file open in the file pane as the last look found it: its path, and its size and when it
 // changed.
 let fileSeen: { path: string; stamp: string } | null = null
+
+// How many looks found the disk or git moved, or the pane back in sight: the timeline looks for
+// changes made outside Claude when this goes up.
+let moves = 0
+
+export const movesOf = () => moves
 
 export function lookForChanges($: EngineInterface) {
   if (isLooking) return
@@ -767,6 +810,7 @@ async function lookAgain($: EngineInterface): Promise<number> {
 
   fileSeen = file
   if (isFileMoved || isGitMoved || isBack) readings.clear()
+  if (isRenamed || isResized || isFileMoved || isGitMoved || isBack) moves++
 
   if (isRenamed || isGitMoved || isBack) void refreshGit($)
   else if (isResized || isFileMoved) redraw($)
