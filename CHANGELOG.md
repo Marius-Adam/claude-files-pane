@@ -2,7 +2,14 @@
 
 Each release of Files pane, newest first. The version is the one in [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json), and each has a [GitHub release](https://github.com/Marius-Adam/claude-files-pane/releases).
 
-## [1.0.0] - Unreleased
+## [Unreleased]
+
+### Added
+
+- **Pictures open as a preview.** An SVG draws as itself, with its markup one press away. A PNG, JPEG, GIF or WebP draws in the desktop app and VS Code when it's under about 95 KB, and a PNG of any size draws in terminals that show pictures (kitty, Ghostty, iTerm2 3.5 and later). Under each picture: its type, size in pixels and weight. A picture that can't draw says what it is instead of "A binary file". (#53)
+- **A Markdown preview shows its pictures.** A picture on a line of its own, from a path on the disk, draws in its place, found from the file's folder (or the project's, for a path from `/`). (#53)
+
+## [1.0.0] - 2026-11-08
 
 The pane now does more than show you files. You can open a file to see its text, diff and history, follow the branch's pull request and its checks, and see changes from your editor or terminal as they happen.
 
