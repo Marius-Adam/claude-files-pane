@@ -94,6 +94,15 @@ export type FileText = { text: string; more: number } | { reason: 'binary' | 'la
 // you or another program.
 export type Change = { at: number; path: string; by: 'claude' | 'command' | 'outside'; command: string | null }
 
+// A picture as the file pane previews it: an SVG's markup, from its `<svg` on; or a PNG, JPEG,
+// GIF or WebP, its type, its pixels' width and height (0 where the header gave none), its size on
+// the disk and when it last changed, and its bytes in base64 unless past what a preview draws.
+// Or why it shows none.
+export type Picture =
+  | { kind: 'svg'; markup: string }
+  | { kind: 'raster'; type: 'png' | 'jpeg' | 'gif' | 'webp'; width: number; height: number; bytes: number; mtimeMs: number; base64: string | null }
+  | { reason: 'large' | 'unreadable' }
+
 // A commit that changed a file: its short hash, author, when (milliseconds since the epoch), its
 // first line, and the file's path then, from the repository's top (it may have been renamed since).
 export type Commit = { hash: string; author: string; at: number; subject: string; path: string }

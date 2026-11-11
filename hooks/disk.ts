@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { Commit, FileText, Git, Mark, Op, Pr } from '../types'
+import type { Commit, FileText, Git, Mark, Op, Picture, Pr } from '../types'
+import { bytesOf, headerOf, isSvg, markupOf, PICTURE_BYTES, SVG_CHARS } from './media'
 import { base, dirOf, join, listPath, slashed, unfiltered } from './paths'
 import { DEFAULT_VIEW } from './state'
 
@@ -620,6 +621,39 @@ export function textOf($: EngineInterface, abs: string): Promise<FileText> {
     const cut = lines.slice(0, lines.lastIndexOf('\n', FILE_CHARS))
 
     return { text: cut, more: lines.slice(cut.length + 1).split('\n').length }
+  })
+}
+
+// A picture as the file pane previews it: an SVG's markup, or a raster picture's type and size
+// from its header, with its bytes when they fit in what an Svg element takes. A picture's header
+// is read from its first HEADER_CHARS characters of base64, past most cameras' metadata.
+const HEADER_CHARS = 512 * 1024
+
+export function pictureOf($: EngineInterface, abs: string): Promise<Picture> {
+  return kept(`picture\0${abs}`, async (): Promise<Picture> => {
+    const stat = await $.fs.stat(abs).catch(() => null)
+
+    if (!stat || stat.kind !== 'file') return { reason: 'unreadable' }
+
+    if (isSvg(abs)) {
+      if (stat.size > SVG_CHARS * 4) return { reason: 'large' }
+
+      const markup = markupOf((await $.fs.read(abs).catch(() => null)) ?? '')
+
+      if (markup === null) return { reason: 'unreadable' }
+      if (markup.length > SVG_CHARS) return { reason: 'large' }
+
+      return { kind: 'svg', markup }
+    }
+
+    if (stat.size > PICTURE_BYTES) return { reason: 'large' }
+
+    const read = await $.fs.read(abs, { as: 'bytes' }).catch(() => null)
+    const header = read ? headerOf(bytesOf(read.base64, HEADER_CHARS)) : null
+
+    if (!read || !header) return { reason: 'unreadable' }
+
+    return { kind: 'raster', ...header, bytes: stat.size, mtimeMs: stat.mtimeMs, base64: read.base64.length < SVG_CHARS ? read.base64 : null }
   })
 }
 

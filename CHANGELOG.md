@@ -6,6 +6,8 @@ Each release of Files pane, newest first. The version is the one in [`.claude-pl
 
 ### Added
 
+- **Pictures open as a preview.** An SVG draws as itself, with its markup one press away. A PNG, JPEG, GIF or WebP draws in the desktop app and VS Code when it's under about 95 KB, and a PNG of any size draws in terminals that show pictures (kitty, Ghostty, iTerm2 3.5 and later). Under each picture: its type, size in pixels and weight. A picture that can't draw says what it is instead of "A binary file". (#53)
+- **A Markdown preview shows its pictures.** A picture on a line of its own, from a path on the disk, draws in its place, found from the file's folder (or the project's, for a path from `/`). (#53)
 - **A timeline of the session's changes.** Under the touched list, **Show** opens every change to a file this session, newest first, with its time and who made it: **Claude** (its Edit or Write), **Command** (the file changed while a command ran, with the command, since a save of yours in those seconds would look the same), or **Outside** (no tool call of Claude's was running: you, or another program). A press on a file opens its diff. Idea from Reddit. (#54)
 
 ## [1.0.0] - 2026-11-08

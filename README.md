@@ -70,7 +70,7 @@ Everything that changed is in the [changelog](CHANGELOG.md).
 
 **Open a file**
 
-- **File**: its text with line numbers, or a Markdown file as its preview
+- **File**: its text with line numbers; a Markdown file as its preview, its pictures drawn in place; a picture as itself
 - **Diff**: what changed since the last commit
 - **History**: the commits that changed it, each a press from what it changed
 
