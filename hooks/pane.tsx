@@ -68,7 +68,7 @@ const WHO = {
 } as const
 const MATCHES = 50
 // The touched list shows its newest files up to this many, and offers the rest a press away.
-const TOUCHED_ROWS = 8
+const TOUCHED_ROWS = 5
 // The timeline shows this many of the session's changes, the newest, so the tree below stays in
 // sight; the rest, up to LOG_ROWS, a press away.
 const LOG_SHORT = 5
@@ -957,11 +957,10 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const shown = nameAt(home, v.dir)
     const rootRow = (
       <Box key="row:." {...rounded()} justifyContent="space-between" alignItems="center" gap={1} paddingX={1} paddingY={0} overflow="hidden">
+        {/* Its icon sits where its contents' chevrons do, as VS Code's root does, so what is in
+            it shows one step in from it. */}
         <Box gap={1} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
-          <Box gap={xs} alignItems="center">
-            {chevron()}
-            {icon(folderIcon(shown, true), shown, '▪', shown.startsWith('.') ? MUTED : FOLDER, 16)}
-          </Box>
+          {icon(folderIcon(shown, true), shown, '▪', shown.startsWith('.') ? MUTED : FOLDER, 16)}
           <Text weight="semibold" wrap="truncate-end">
             {shown}
           </Text>
@@ -1149,22 +1148,73 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
 
         <Box flexDirection="column" borderStyle="round" borderColor={edge} backgroundColor={isRich ? CARD : undefined} gap={xs}>
-          {head(
-            'CLAUDE TOUCHED',
-            <Box gap={xs} alignItems="center">
-              {tool(
-                'scope',
-                'Whole session',
-                async () => {
-                  await update($, scope, old => (old === 'session' ? 'turn' : 'session'))
-                  redraw($)
-                },
-                isSession ? 'on' : 'off',
-              )}
-              {isRich ? pill(plural(shownTouched.length, 'file'), MUTED) : <Text dimColor size="caption">{plural(shownTouched.length, 'file')}</Text>}
-            </Box>,
-          )}
-          {shownTouched.length === 0 && (
+          {/* One list at a time, so the tree keeps its room: the files Claude touched, or the
+              timeline of every change. The aside belongs to the list shown. */}
+          <Box justifyContent="space-between" alignItems="center" gap={1} paddingX={1} overflow="hidden">
+            {pressAway('head:lists')}
+            {/* A toggle of two halves, the one shown filled: a press on the other switches. */}
+            {(() => {
+              const show = (isTimeline: boolean) => async () => {
+                await update($, isLogShown, () => isTimeline)
+                redraw($)
+              }
+              const halves = [
+                { key: 'touched-tab', label: 'Touched', isOn: !isLogOpen, onPress: show(false) },
+                { key: 'timeline', label: 'Timeline', isOn: isLogOpen, onPress: show(true) },
+              ]
+
+              if (!isRich) {
+                return (
+                  <Box gap={1} alignItems="center" flexShrink={0}>
+                    {halves.map(half => (
+                      <Button key={half.key} plain dimColor={!half.isOn} onPress={half.onPress}>
+                        <Text size="caption" weight={half.isOn ? 'bold' : undefined}>
+                          {half.isOn ? `[${half.label}]` : half.label}
+                        </Text>
+                      </Button>
+                    ))}
+                  </Box>
+                )
+              }
+
+              return (
+                <Box key="lists-toggle" {...rounded(CARD_EDGE)} paddingX={0} paddingY={0} gap={0} flexShrink={0} alignItems="center">
+                  {halves.map(half => (
+                    <Box
+                      key={`half:${half.key}`}
+                      {...rounded(half.isOn ? tint(FOLDER, '59') : CLEAR)}
+                      backgroundColor={half.isOn ? tint(FOLDER, '1f') : undefined}
+                      paddingX={0}
+                      paddingY={0}
+                    >
+                      <Button key={half.key} plain dimColor={!half.isOn} onPress={half.onPress}>
+                        <Text size="caption" weight={half.isOn ? 'semibold' : undefined}>
+                          {half.label}
+                        </Text>
+                      </Button>
+                    </Box>
+                  ))}
+                </Box>
+              )
+            })()}
+            <Box gap={xs} alignItems="center" flexShrink={1} minWidth={0} overflow="hidden">
+              {!isLogOpen &&
+                tool(
+                  'scope',
+                  'Whole session',
+                  async () => {
+                    await update($, scope, old => (old === 'session' ? 'turn' : 'session'))
+                    redraw($)
+                  },
+                  isSession ? 'on' : 'off',
+                )}
+              {(() => {
+                const count = isLogOpen ? plural(changes.length, 'change') : plural(shownTouched.length, 'file')
+                return isRich ? pill(count, MUTED) : <Text dimColor size="caption">{count}</Text>
+              })()}
+            </Box>
+          </Box>
+          {!isLogOpen && shownTouched.length === 0 && (
             <Box paddingX={1} overflow="hidden">
               <Text dimColor>Nothing yet</Text>
               {pressAway('none')}
@@ -1172,7 +1222,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )}
           {/* The older files, folded above the newest; opened, the same row folds them again. It
               says "more", never "earlier": Whole session already means the earlier turns' files. */}
-          {(isFolded ? foldedCount > 0 : shownTouched.length > TOUCHED_ROWS) && (
+          {!isLogOpen && (isFolded ? foldedCount > 0 : shownTouched.length > TOUCHED_ROWS) && (
             <Box key="touched-fold" paddingX={1}>
               <Button
                 key="touched-all"
@@ -1187,7 +1237,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               </Button>
             </Box>
           )}
-          {keptTouched.flatMap(one => {
+          {!isLogOpen && keptTouched.flatMap(one => {
             const abs = absOf(cwd, one.path)
             // A diff for a file with changes not yet committed: as git reports it where git is read,
             // since a commit Claude did not make here (another session's, the app's, the person's)
@@ -1246,26 +1296,6 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               canDiff,
             )
           })}
-        </Box>
-
-        {/* The session's changes, newest first, each with who made it as far as the pane can
-            tell, and the command a file changed during. Closed until asked for. */}
-        <Box flexDirection="column" borderStyle="round" borderColor={edge} backgroundColor={isRich ? CARD : undefined} gap={xs}>
-          {head(
-            'TIMELINE',
-            <Box gap={xs} alignItems="center">
-              {tool(
-                'timeline',
-                'Show',
-                async () => {
-                  await update($, isLogShown, old => !old)
-                  redraw($)
-                },
-                isLogOpen ? 'on' : 'off',
-              )}
-              {isRich ? pill(plural(changes.length, 'change'), MUTED) : <Text dimColor size="caption">{plural(changes.length, 'change')}</Text>}
-            </Box>,
-          )}
           {isLogOpen && changes.length === 0 && (
             <Box paddingX={1}>
               <Text dimColor>No changes yet</Text>

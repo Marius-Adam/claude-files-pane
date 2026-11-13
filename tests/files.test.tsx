@@ -135,7 +135,7 @@ test('a read shows in the card and the touched list, on every surface', async ($
     expect(await text(ui, /^opened 1 file$/)).toBe('opened 1 file')
     expect(await text(ui, /^client\.test\.js$/)).toBe('client.test.js')
     expect(await text(ui, /^ ?Opened ?$/)).toBeUndefined()
-    expect(await text(ui, /^CLAUDE TOUCHED$/)).toBe('CLAUDE TOUCHED')
+    expect(await text(ui, /Touched\]?$/)).toMatch(/Touched/)
     expect(await text(ui, /^ ?1 file ?$/)).toMatch(/1 file/)
     expect(await text(ui, /1 changed/)).toMatch(/1 changed/)
     expect(await text(ui, /^ ?proj ?$/)).toMatch(/proj/)
@@ -287,10 +287,10 @@ test('every file keeps the chevron space, beside a folder or not', async ($, on)
   const blanks = async () => ((await ui.findAll({ type: 'Svg' })) as unknown as { props: { alt: string } }[]).filter(one => one.props.alt === 'file')
 
   // README.md and .env sit beside src/ and tests/; client.js has no folder beside it in src/, and
-  // lines up under src/'s icon all the same.
+  // lines up under src/'s icon all the same. The first row has none: its icon takes that place.
   await ui.press({ key: 'fold:src' })
   expect(await text(ui, /^client\.js$/)).toBe('client.js')
-  expect(await blanks()).toHaveLength(4)
+  expect(await blanks()).toHaveLength(3)
   await ui.unmount()
 })
 
@@ -954,7 +954,7 @@ test('a press on a plain part of the pane closes a file’s actions', async ($, 
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
 
-  for (const part of ['away:card', 'away:branch', 'away:legend', 'away:head:CLAUDE TOUCHED']) {
+  for (const part of ['away:card', 'away:branch', 'away:legend', 'away:head:lists']) {
     await ui.press({ key: 'more:touched:/proj/src/client.js' })
     expect(await text(ui, /^@ Mention$/)).toBe('@ Mention')
     await ui.press({ key: part })
@@ -1330,12 +1330,12 @@ test('a long touched list shows its newest files and folds the older ones a pres
     const ui = await $.ui.mount({ ...PANE, surface })
     const shown = async () => ((await ui.findAll({ type: 'Text', text: /^n\d+\.md$/ })) as unknown as unknown[]).length
 
-    // The newest eight show; the three oldest fold into one row, the count still the whole list's.
+    // The newest five show; the six oldest fold into one row, the count still the whole list's.
     // The row says how many more, never "earlier": Whole session is what holds the earlier turns.
-    expect(await shown()).toBe(8)
+    expect(await shown()).toBe(5)
     expect(await text(ui, /^n11\.md$/)).toBe('n11.md')
     expect(await text(ui, /^n1\.md$/)).toBeUndefined()
-    expect(await text(ui, /3 more$/)).toMatch(/3 more$/)
+    expect(await text(ui, /6 more$/)).toMatch(/6 more$/)
     expect(await text(ui, /Show fewer/)).toBeUndefined()
     expect(await text(ui, /earlier/i)).toBeUndefined()
     expect(await text(ui, /^ ?11 files ?$/)).toMatch(/11 files/)
@@ -1348,8 +1348,8 @@ test('a long touched list shows its newest files and folds the older ones a pres
     expect(await text(ui, /earlier/i)).toBeUndefined()
 
     await ui.press({ key: 'touched-all' })
-    expect(await shown()).toBe(8)
-    expect(await text(ui, /3 more$/)).toMatch(/3 more$/)
+    expect(await shown()).toBe(5)
+    expect(await text(ui, /6 more$/)).toMatch(/6 more$/)
     await ui.unmount()
   }
 })
@@ -1361,20 +1361,20 @@ test('with Whole session on, the touched list folds the earlier turns’ files w
   await $.turn.start({ turnId: 't1', prompt: 'look' } as never)
   for (let i = 1; i <= 6; i++) await $.tool.call({ tool: 'Read', file_path: `/proj/notes/n${i}.md` })
   await $.turn.start({ turnId: 't2', prompt: 'again' } as never)
-  for (let i = 7; i <= 12; i++) await $.tool.call({ tool: 'Read', file_path: `/proj/notes/n${i}.md` })
+  for (let i = 7; i <= 10; i++) await $.tool.call({ tool: 'Read', file_path: `/proj/notes/n${i}.md` })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   const shown = async () => ((await ui.findAll({ type: 'Text', text: /^n\d+\.md$/ })) as unknown as unknown[]).length
 
-  // This turn's six fit, with nothing to fold.
-  expect(await shown()).toBe(6)
+  // This turn's four fit, with nothing to fold.
+  expect(await shown()).toBe(4)
   expect(await text(ui, /more$/)).toBeUndefined()
 
-  // The whole session's twelve: the newest eight, and the four before them a press away.
+  // The whole session's ten: the newest five, and the five before them a press away.
   await ui.press({ key: 'scope' })
-  expect(await shown()).toBe(8)
-  expect(await text(ui, /^n12\.md$/)).toBe('n12.md')
-  expect(await text(ui, /4 more$/)).toMatch(/4 more$/)
+  expect(await shown()).toBe(5)
+  expect(await text(ui, /^n10\.md$/)).toBe('n10.md')
+  expect(await text(ui, /5 more$/)).toMatch(/5 more$/)
   expect(await text(ui, /earlier/i)).toBeUndefined()
   await ui.unmount()
 })

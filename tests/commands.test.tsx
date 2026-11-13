@@ -275,16 +275,16 @@ test('the timeline says who changed each file, newest first: Claude’s edit, a 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
 
   // Closed until asked for, with how many changes it holds.
-  expect(await reading(ui)).toMatch(/TIMELINE Show 3 changes/)
+  expect(await reading(ui)).toMatch(/Touched Timeline Whole session 2 files/)
   await ui.press({ key: 'timeline' })
   expect(await reading(ui)).toMatch(
-    /TIMELINE ✓ Show 3 changes notes file\.md Outside \d\d:\d\d client\.js src Command \d\d:\d\d CHANGES\.md Claude \d\d:\d\d ALL FILES/,
+    /Touched Timeline 3 changes notes file\.md Outside \d\d:\d\d client\.js src Command \d\d:\d\d CHANGES\.md Claude \d\d:\d\d ALL FILES/,
   )
 
   // Claude's own edits never come back as changes made outside it.
   await clock.advance(5000)
   await clock.settle()
-  expect(await reading(ui)).toMatch(/TIMELINE ✓ Show 3 changes/)
+  expect(await reading(ui)).toMatch(/Timeline 3 changes/)
   await ui.unmount()
 })
 
@@ -306,7 +306,7 @@ test('an edit Claude makes again counts each time; a command that changes nothin
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'timeline' })
-  expect(await reading(ui)).toMatch(/TIMELINE .*2 changes MD CHANGES\.md ● Claude \d\d:\d\d MD CHANGES\.md ● Claude \d\d:\d\d/)
+  expect(await reading(ui)).toMatch(/\[Timeline\] 2 changes MD CHANGES\.md ● Claude \d\d:\d\d MD CHANGES\.md ● Claude \d\d:\d\d/)
   await ui.unmount()
 })
 
@@ -326,8 +326,8 @@ test('the timeline shows its newest five changes, and the rest a press away', as
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'timeline' })
-  expect(await reading(ui)).toMatch(/TIMELINE .*7 changes (MD CHANGES\.md ● Claude \d\d:\d\d ){5}▸ 2 more ALL FILES/)
+  expect(await reading(ui)).toMatch(/\[Timeline\] 7 changes (MD CHANGES\.md ● Claude \d\d:\d\d ){5}▸ 2 more ALL FILES/)
   await ui.press({ key: 'log-all' })
-  expect(await reading(ui)).toMatch(/TIMELINE .*7 changes (MD CHANGES\.md ● Claude \d\d:\d\d ){7}▾ Show fewer ALL FILES/)
+  expect(await reading(ui)).toMatch(/\[Timeline\] 7 changes (MD CHANGES\.md ● Claude \d\d:\d\d ){7}▾ Show fewer ALL FILES/)
   await ui.unmount()
 })

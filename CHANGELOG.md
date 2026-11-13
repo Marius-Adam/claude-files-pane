@@ -2,6 +2,14 @@
 
 Each release of Files pane, newest first. The version is the one in [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json), and each has a [GitHub release](https://github.com/Marius-Adam/claude-files-pane/releases).
 
+## [Unreleased]
+
+### Changed
+
+- **Touched and Timeline share one section**, with a toggle between them, so only one list takes room above the tree. **Whole session** shows with Touched, the one it applies to.
+- **The touched list shows its newest five files**, as the timeline does, the rest a press away. It showed eight.
+- **The tree's first row sits one step out**, its icon where its contents' chevrons are, as VS Code's root does, so what's in the folder shows indented under it.
+
 ## [1.1.1] - 2026-11-13
 
 ### Changed
