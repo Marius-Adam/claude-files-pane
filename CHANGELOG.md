@@ -2,7 +2,9 @@
 
 Each release of Files pane, newest first. The version is the one in [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json), and each has a [GitHub release](https://github.com/Marius-Adam/claude-files-pane/releases).
 
-## [Unreleased]
+## [1.2.0] - 2026-11-13
+
+More room for the tree: the touched list and the timeline share one section, and the tree's first row sits one step out.
 
 ### Changed
 
@@ -80,6 +82,7 @@ The pane now does more than show you files. You can open a file to see its text,
 
 Versions 0.5.0 to 0.8.2 (30 October to 1 November 2026) were released without notes. Their history is in the [commit log](https://github.com/Marius-Adam/claude-files-pane/commits/main).
 
+[1.2.0]: https://github.com/Marius-Adam/claude-files-pane/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/Marius-Adam/claude-files-pane/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/Marius-Adam/claude-files-pane/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Marius-Adam/claude-files-pane/compare/v0.9.0...v1.0.0

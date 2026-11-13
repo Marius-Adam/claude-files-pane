@@ -50,10 +50,11 @@
 
 <img src="docs/demo.gif" alt="The Files pane in the Claude desktop app as Claude fixes a discount bug: its edit and a sed that renames a function turn five files orange, then green once committed; after it pushes and opens a pull request, the branch row shows the PR with its checks running, then passing. A Markdown file opens as a preview beside the pane, a commit in a file's History shows what it changed, and a line added from a terminal marks the file changed within seconds, its Diff a press away" width="880">
 
-### New in 1.1
+### New in 1.2
 
-- **Pictures** open as themselves: SVG, PNG, JPEG, GIF and WebP, and a Markdown preview draws its pictures in place
 - **Timeline** of every change to a file this session, and who made it: Claude, a command it ran, or you
+- **Touched | Timeline** share one section with a toggle, so the tree keeps its room
+- **Pictures** open as themselves: SVG, PNG, JPEG, GIF and WebP, and a Markdown preview draws its pictures in place
 
 Everything that changed is in the [changelog](CHANGELOG.md).
 
@@ -63,8 +64,8 @@ Everything that changed is in the [changelog](CHANGELOG.md).
 
 - **Live card**: Claude's thinking, the command it runs, the file it reads or edits
 - **Tree that follows Claude**: opens to each file it edits, even in another project
-- **Touched list**: files read or edited this turn or session, with lines added and removed, including files changed by a command Claude runs
-- **Timeline**: every change to a file this session, newest first, and who made it: Claude's edit, a command it ran, or outside Claude. The newest five show, the rest a press away, and a press on one opens its diff
+- **Touched**: files read or edited this turn or session, with lines added and removed, including files changed by a command Claude runs
+- **Timeline**, a toggle away: every change to a file this session, newest first, and who made it: Claude's edit, a command it ran, or outside Claude. The newest five show, the rest a press away, and a press on one opens its diff
 
 **Open a file**
 
