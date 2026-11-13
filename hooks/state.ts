@@ -26,3 +26,4 @@ export const DEFAULT_VIEW: View = { query: '', root: '', dir: '', expanded: [], 
 //   opened   'opened-1'   the file open in the file pane, and its tab: Opened | null
 //   log      'log-1'      the session's changes, oldest first: Change[]
 //   isLogShown (none)     whether the timeline is open: boolean
+//   isLogAll (none)       whether it shows every change kept, past the newest few: boolean
