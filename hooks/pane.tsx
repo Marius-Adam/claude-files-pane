@@ -50,6 +50,7 @@ const pr = atom({ plugin: 'files-pane', key: 'pr' } as const, null, { shape: 'pr
 const scope = atom({ plugin: 'files-pane', key: 'scope' } as const, 'turn', { shape: 'scope-1' })
 const isTouchedAll = atom({ plugin: 'files-pane', key: 'isTouchedAll' } as const, false)
 const isLogShown = atom({ plugin: 'files-pane', key: 'isLogShown' } as const, false)
+const isLogAll = atom({ plugin: 'files-pane', key: 'isLogAll' } as const, false)
 const log = atom({ plugin: 'files-pane', key: 'log' } as const, [], { shape: 'log-1' })
 const status = atom({ plugin: 'files-pane', key: 'status' } as const, null, { shape: 'status-1' })
 const tick = atom({ plugin: 'files-pane', key: 'tick' } as const, 0)
@@ -68,7 +69,9 @@ const WHO = {
 const MATCHES = 50
 // The touched list shows its newest files up to this many, and offers the rest a press away.
 const TOUCHED_ROWS = 8
-// The timeline shows this many of the session's changes, the newest.
+// The timeline shows this many of the session's changes, the newest, so the tree below stays in
+// sight; the rest, up to LOG_ROWS, a press away.
+const LOG_SHORT = 5
 const LOG_ROWS = 40
 // A pull request's pill, coloured as GitHub colours where it stands.
 const PR_COLORS: Record<Pr['state'], string> = { open: DONE, draft: MUTED, merged: READ, closed: REMOVED }
@@ -105,7 +108,7 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         redraw($)
       })
     }
-    const [changes, isLogOpen] = await Promise.all([read($, log), read($, isLogShown)])
+    const [changes, isLogOpen, isLogLong] = await Promise.all([read($, log), read($, isLogShown), read($, isLogAll)])
     const [cur, list, prior, sc, isAll, v, g, found, open, acts, foot] = await Promise.all([
       read($, now),
       read($, touched),
@@ -1270,45 +1273,77 @@ export async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )}
           {isLogOpen &&
             changes
-              .slice(-LOG_ROWS)
+              .slice(-(isLogLong ? LOG_ROWS : LOG_SHORT))
               .reverse()
               .map(one => {
                 const abs = absOf(cwd, one.path)
                 const who = WHO[one.by]
+                const diff = () => openFile($, abs, 'diff')
+                const name = (
+                  <Text color={who.color} weight="semibold" wrap="truncate-end">
+                    {base(one.path)}
+                  </Text>
+                )
 
+                // As a touched row: tinted in who made it, the file's icon and name, its folder giving
+                // way; at the end, who made it and when.
                 return (
-                  <Box key={`change:${one.at}:${one.path}`} flexDirection="column" paddingX={1} overflow="hidden">
-                    <Box gap={1} alignItems="center" overflow="hidden">
-                      <Text dimColor size="footnote" tabular>
-                        {timeOf(one.at)}
-                      </Text>
-                      <Box flexShrink={0}>{isRich ? pill(who.label, who.color) : <Text color={who.color} size="caption">{who.label}</Text>}</Box>
-                      <Box flexShrink={1} minWidth={0}>
-                        <Button key={`change:${one.at}:${one.path}`} plain onPress={() => openFile($, abs, 'diff')}>
-                          <Text weight="semibold" wrap="truncate-end">
-                            {base(one.path)}
+                  <Box
+                    key={`change:${one.at}:${one.path}`}
+                    {...rounded()}
+                    backgroundColor={isRich ? tint(who.color, '14') : undefined}
+                    {...lit(who.color)}
+                    paddingLeft={1}
+                    paddingRight={1}
+                    paddingY={0}
+                    overflow="hidden"
+                  >
+                    {canLayer && pressAnywhere(`change:${one.at}:${abs}`, diff)}
+                    <Box justifyContent="space-between" alignItems="center" gap={1} flexGrow={1} minWidth={0} overflow="hidden">
+                      <Box gap={1} alignItems="center" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
+                        {chip(base(one.path))}
+                        <Box flexShrink={1}>
+                          {canLayer ? (
+                            name
+                          ) : (
+                            <Button key={`change-name:${one.at}:${abs}`} plain onPress={diff}>
+                              {name}
+                            </Button>
+                          )}
+                        </Box>
+                        <Box flexShrink={8} minWidth={0}>
+                          <Text dimColor size="footnote" wrap="truncate-start">
+                            {where(dirOf(one.path))}
                           </Text>
-                        </Button>
+                        </Box>
                       </Box>
-                      <Box flexShrink={8} minWidth={0}>
-                        <Text dimColor size="footnote" wrap="truncate-start">
-                          {where(dirOf(one.path))}
+                      <Box gap={1} alignItems="center" flexShrink={0}>
+                        {dot(who.color, false, 8)}
+                        <Text dimColor size="footnote">
+                          {who.label}
+                        </Text>
+                        <Text dimColor size="footnote" tabular>
+                          {timeOf(one.at)}
                         </Text>
                       </Box>
                     </Box>
-                    {one.command !== null && (
-                      <Text dimColor size="footnote" wrap="truncate-end">
-                        {`during ${one.command}`}
-                      </Text>
-                    )}
                   </Box>
                 )
               })}
-          {isLogOpen && changes.length > 0 && (
-            <Box paddingX={1}>
-              <Text dimColor size="footnote">
-                Command: changed while it ran, most likely by it. Outside: you or another program.
-              </Text>
+          {/* The older changes, folded under the newest; opened, the same row folds them again. */}
+          {isLogOpen && changes.length > LOG_SHORT && (
+            <Box key="log-fold" paddingX={1}>
+              <Button
+                key="log-all"
+                plain
+                dimColor
+                onPress={async () => {
+                  await update($, isLogAll, old => !old)
+                  redraw($)
+                }}
+              >
+                <Text size="footnote">{isLogLong ? `${CARETS[1]} Show fewer` : `${CARETS[0]} ${Math.min(changes.length, LOG_ROWS) - LOG_SHORT} more`}</Text>
+              </Button>
             </Box>
           )}
         </Box>

@@ -278,7 +278,7 @@ test('the timeline says who changed each file, newest first: Claude’s edit, a 
   expect(await reading(ui)).toMatch(/TIMELINE Show 3 changes/)
   await ui.press({ key: 'timeline' })
   expect(await reading(ui)).toMatch(
-    /TIMELINE ✓ Show 3 changes \d\d:\d\d Outside notes file\.md \d\d:\d\d Command client\.js src during sed -i '' 's\/retry = 2\/retry = 3\/' src\/client\.js \d\d:\d\d Claude CHANGES\.md Command: changed while it ran, most likely by it\. Outside: you or another program\./,
+    /TIMELINE ✓ Show 3 changes notes file\.md Outside \d\d:\d\d client\.js src Command \d\d:\d\d CHANGES\.md Claude \d\d:\d\d ALL FILES/,
   )
 
   // Claude's own edits never come back as changes made outside it.
@@ -306,6 +306,28 @@ test('an edit Claude makes again counts each time; a command that changes nothin
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'timeline' })
-  expect(await reading(ui)).toMatch(/TIMELINE .*2 changes \d\d:\d\d Claude CHANGES\.md \d\d:\d\d Claude CHANGES\.md/)
+  expect(await reading(ui)).toMatch(/TIMELINE .*2 changes MD CHANGES\.md ● Claude \d\d:\d\d MD CHANGES\.md ● Claude \d\d:\d\d/)
+  await ui.unmount()
+})
+
+test('the timeline shows its newest five changes, and the rest a press away', async ($, on) => {
+  const edited = CHANGED.replace('src/client.js', 'CHANGES.md')
+  const git = world({
+    commands: {
+      '': one => {
+        write('CHANGES.md')(one)
+        one.entries = [...one.entries.filter(field => field !== edited), edited]
+      },
+    },
+  })
+  engine(on, git)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  for (const n of [1, 2, 3, 4, 5, 6, 7]) await $.tool.call({ tool: 'Edit', file_path: '/proj/CHANGES.md', old_string: `${n}`, new_string: `${n + 1}` } as never)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'timeline' })
+  expect(await reading(ui)).toMatch(/TIMELINE .*7 changes (MD CHANGES\.md ● Claude \d\d:\d\d ){5}▸ 2 more ALL FILES/)
+  await ui.press({ key: 'log-all' })
+  expect(await reading(ui)).toMatch(/TIMELINE .*7 changes (MD CHANGES\.md ● Claude \d\d:\d\d ){7}▾ Show fewer ALL FILES/)
   await ui.unmount()
 })

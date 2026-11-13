@@ -64,7 +64,7 @@ Everything that changed is in the [changelog](CHANGELOG.md).
 - **Live card**: Claude's thinking, the command it runs, the file it reads or edits
 - **Tree that follows Claude**: opens to each file it edits, even in another project
 - **Touched list**: files read or edited this turn or session, with lines added and removed, including files changed by a command Claude runs
-- **Timeline**: every change to a file this session, newest first, and who made it: Claude's edit, a command ("during `npm run format`", since a save of yours in those seconds would look the same), or outside Claude. A press opens its diff
+- **Timeline**: every change to a file this session, newest first, and who made it: Claude's edit, a command it ran, or outside Claude. The newest five show, the rest a press away, and a press on one opens its diff
 
 **Open a file**
 
