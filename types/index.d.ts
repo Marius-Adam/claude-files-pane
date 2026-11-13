@@ -127,6 +127,8 @@ declare module 'claude-code' {
       log: Shaped<Change[]>
       // Whether the timeline under the touched list is open.
       isLogShown: boolean
+      // Whether the timeline shows every change it keeps, past the newest few it shows by itself.
+      isLogAll: boolean
     }
   }
 }
